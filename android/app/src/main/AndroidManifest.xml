@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+        Camera is used only for the operator-initiated QR pairing scan (see
+        ConnectionActivity's "Scan QR" button). No permission is requested at
+        install time beyond what's declared here, and CAMERA is requested at
+        runtime, transparently, only when the user taps Scan QR — see
+        docs/ARCHITECTURE.md "Android architecture".
+    -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+
+    <application
+        android:allowBackup="true"
+        android:icon="@drawable/ic_launcher"
+        android:label="@string/app_name"
+        android:theme="@style/Theme.DroidBridgeCompanion"
+        android:supportsRtl="true">
+
+        <!--
+            Deliberately a single, clearly-labeled, always-visible activity.
+            No hidden services, no disguised launcher icon/name, no background
+            components — see FEATURE_SPEC.md "Explicitly out of scope" and the
+            project brief's "do not make the application hidden" requirement.
+        -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:label="@string/app_name">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

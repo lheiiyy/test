@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">DroidBridge Companion</string>
+
+    <string name="connection_status_disconnected">Disconnected</string>
+    <string name="connection_status_connected">Connected to %1$s</string>
+
+    <string name="permission_status_camera_granted">Camera: granted</string>
+    <string name="permission_status_camera_denied">Camera: not granted</string>
+
+    <string name="action_scan_qr">Scan QR to Pair</string>
+    <string name="action_disconnect">Disconnect</string>
+
+    <string name="scan_qr_not_implemented">QR scanning will be implemented in a later phase.</string>
+    <string name="camera_permission_rationale">Camera access is only used to scan a DroidBridge pairing QR code shown on your computer. It is never used in the background.</string>
+</resources>

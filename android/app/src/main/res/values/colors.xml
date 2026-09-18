@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="db_background">#0F1420</color>
+    <color name="db_surface">#161D2E</color>
+    <color name="db_text">#E6E9F2</color>
+    <color name="db_text_muted">#9AA4BD</color>
+    <color name="db_accent">#4F8CFF</color>
+    <color name="db_green">#35C47F</color>
+    <color name="db_red">#E5484D</color>
+</resources>

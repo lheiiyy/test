@@ -1,0 +1,22 @@
+node_modules/
+dist/
+dist-electron/
+build/
+release/
+coverage/
+*.log
+.DS_Store
+.env
+.env.local
+
+# Android
+android/.gradle/
+android/local.properties
+android/**/build/
+android/.idea/
+android/*.iml
+android/captures/
+android/.cxx/
+
+# Vite
+.vite/

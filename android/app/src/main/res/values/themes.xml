@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.DroidBridgeCompanion" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/db_accent</item>
+        <item name="colorOnPrimary">@color/db_text</item>
+        <item name="android:windowBackground">@color/db_background</item>
+        <item name="colorSurface">@color/db_surface</item>
+        <item name="colorOnSurface">@color/db_text</item>
+    </style>
+</resources>
