@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!--
+      Intentionally minimal permission set. No RECORD_AUDIO, no CAMERA, no SMS/contacts,
+      no accessibility-based text/keystroke capture. See README "What this does not do".
+
+      PACKAGE_USAGE_STATS is a special app-op, not a normal <uses-permission> grant; it is
+      requested at runtime via Settings.ACTION_USAGE_ACCESS_SETTINGS (see PermissionUtils.kt).
+      We still declare it so the OS setting page recognizes this app.
+
+      No QUERY_ALL_PACKAGES: once provisioned as Device Owner, this app is exempt from
+      Android's package-visibility filtering and can resolve any specific package's label
+      by name (see AppLabelResolver.kt) without that restricted permission.
+    -->
+    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS"
+        tools:ignore="ProtectedPermissions" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <application
+        android:name=".ParentalMonitorApp"
+        android:allowBackup="false"
+        android:fullBackupContent="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:theme="@style/Theme.ParentalMonitor"
+        android:supportsRtl="true">
+
+        <activity
+            android:name=".ui.MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:theme="@style/Theme.ParentalMonitor">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Device Owner admin receiver. See DeviceOwnerManager.kt for the provisioning flow. -->
+        <receiver
+            android:name=".admin.MonitorDeviceAdminReceiver"
+            android:exported="true"
+            android:permission="android.permission.BIND_DEVICE_ADMIN">
+            <meta-data
+                android:name="android.app.device_admin"
+                android:resource="@xml/device_admin_receiver" />
+            <intent-filter>
+                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Detects app install / uninstall for the alerts feed. -->
+        <receiver
+            android:name=".monitor.PackageChangeReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.PACKAGE_ADDED" />
+                <action android:name="android.intent.action.PACKAGE_REMOVED" />
+                <data android:scheme="package" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Reschedules the periodic usage-sync worker after a reboot (WorkManager jobs don't
+             survive a reboot on their own). -->
+        <receiver
+            android:name=".monitor.BootCompletedReceiver"
+            android:exported="true"
+            android:permission="android.permission.RECEIVE_BOOT_COMPLETED">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Near-real-time foreground-app supplement to the periodic UsageStatsManager sync.
+             Reads window package/class transitions only; does not read on-screen text or
+             gestures, so it cannot capture keystrokes or message content. -->
+        <service
+            android:name=".accessibility.ForegroundAppAccessibilityService"
+            android:exported="true"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_service_config" />
+        </service>
+
+    </application>
+
+</manifest>
