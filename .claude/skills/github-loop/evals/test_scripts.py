@@ -376,7 +376,102 @@ class LoopGhTests(unittest.TestCase):
         calls = out["dry_run_calls"]
         self.assertEqual(code, 0)
         self.assertIn("labels[]=needs-leo", calls[-1])
+        self.assertIn("DELETE repos/o/r/issues/3/labels/awaiting-approval", " | ".join(calls))
         self.assertFalse(any("labels[]=to-code" in c_ for c_ in calls))
+
+    def test_park_with_phase_records_it_and_explains_the_keywords(self):
+        code, out, _ = self.gh("park", "--turn", "4", "--phase", "2", "--reason", "tests need a new dependency")
+        self.assertEqual(code, 0)
+        self.assertTrue(out["comment"].startswith("<!-- loop:v1 from=code type=question phase=2 turn=4 -->"))
+        self.assertIn("CONTINUE:", out["comment"])
+
+    def test_claim_also_clears_autopilot_labels(self):
+        calls = " | ".join(self.gh("claim")[1]["dry_run_calls"])
+        self.assertIn("labels/awaiting-approval", calls)
+        self.assertIn("labels/needs-leo", calls)
+
+    def test_header_must_be_the_first_line(self):
+        path = self.reply_file("APPROVED\n<!-- loop:v1 from=code type=result turn=2 -->\nok\n")
+        code, out, _ = self.gh("reply", "--file", path, "--turn", "2", "--add", "to-chat")
+        self.assertEqual(code, 1)
+        self.assertTrue(any("first line" in p for p in out["problems"]))
+
+    def test_post_plan(self):
+        path = self.reply_file("<!-- loop:v1 from=code type=plan phase=1 turn=2 -->\nPlan: docs/plan-x.md\n"
+                               "Reply APPROVED (capitals) to build.\n")
+        code, out, _ = self.gh("post-plan", "--file", path, "--turn", "2")
+        self.assertEqual(code, 0)
+        calls = out["dry_run_calls"]
+        self.assertIn("comments", calls[0])
+        self.assertIn("labels[]=awaiting-approval", calls[-1])
+        self.assertIn("labels/code-working", " | ".join(calls))
+
+    def test_post_plan_rejects_other_types_and_missing_phase(self):
+        for text in ["<!-- loop:v1 from=code type=result turn=2 -->\nok\n",
+                     "<!-- loop:v1 from=code type=plan turn=2 -->\nok\n"]:
+            with self.subTest(text=text):
+                code, out, _ = self.gh("post-plan", "--file", self.reply_file(text), "--turn", "2")
+                self.assertEqual(code, 1)
+                self.assertEqual(out["dry_run_calls"], [])
+
+    def test_finish_allows_250_words_and_closes(self):
+        path = self.reply_file("<!-- loop:v1 from=code type=summary phase=2 turn=3 -->\n" + "word " * 240)
+        code, out, _ = self.gh("finish", "--file", path, "--turn", "3")
+        self.assertEqual(code, 0)
+        calls = out["dry_run_calls"]
+        self.assertIn("labels[]=done", " | ".join(calls))
+        self.assertIn("state=closed", calls[-1])
+
+    def test_finish_rejects_over_250_words(self):
+        path = self.reply_file("<!-- loop:v1 from=code type=summary phase=2 turn=3 -->\n" + "word " * 260)
+        code, out, _ = self.gh("finish", "--file", path, "--turn", "3")
+        self.assertEqual(code, 1)
+        self.assertEqual(out["dry_run_calls"], [])
+
+
+class MergeTests(unittest.TestCase):
+    PR = {"state": "open", "merged": False, "draft": False, "mergeable": True, "mergeable_state": "clean",
+          "head": {"ref": "claude/readme", "sha": "abc123"}, "base": {"ref": "main"}}
+
+    def merge(self, comments, **pr_changes):
+        d = tempfile.mkdtemp()
+        issue_ = ap_issue(["code-working"])
+        issue_.pop("comments")
+        pr = dict(self.PR, **pr_changes)
+        for name, data in {"issue.json": issue_, "comments.json": comments, "pr.json": pr}.items():
+            with open(os.path.join(d, name), "w") as f:
+                json.dump(data, f)
+        return run(os.path.join(SCRIPTS, "loop_gh.py"), "merge", "--repo", "o/r", "--issue", "9", "--pr", "7",
+                   "--owner", OWNER, "--fixtures", d, "--dry-run")
+
+    def test_approved_and_clean_merges_with_pinned_sha(self):
+        code, out, _ = self.merge([plan_reply(), c("APPROVED")])
+        self.assertEqual(code, 0)
+        self.assertEqual(out["dry_run_calls"],
+                         ["gh api -X PUT repos/o/r/pulls/7/merge -f merge_method=merge -f sha=abc123"])
+
+    def test_refuses_without_a_verified_approval(self):
+        cases = {"no approval": [plan_reply()],
+                 "stranger": [plan_reply(), c("APPROVED", user="mallory", assoc="NONE")],
+                 "revise after approve": [plan_reply(), c("APPROVED"), c("REVISE: change it")],
+                 "older plan approved": [plan_reply(2), c("APPROVED"), plan_reply(4)],
+                 "lowercase": [plan_reply(), c("approved")]}
+        for name, comments in cases.items():
+            with self.subTest(name):
+                code, out, _ = self.merge(comments)
+                self.assertEqual(code, 4)
+                self.assertEqual(out["dry_run_calls"], [])
+
+    def test_refuses_an_unmergeable_pr(self):
+        cases = {"draft": {"draft": True}, "dirty": {"mergeable_state": "dirty"},
+                 "not mergeable": {"mergeable": False}, "closed": {"state": "closed"},
+                 "other branch": {"head": {"ref": "feature/x", "sha": "abc123"}},
+                 "other base": {"base": {"ref": "develop"}}}
+        for name, change in cases.items():
+            with self.subTest(name):
+                code, out, _ = self.merge([plan_reply(), c("APPROVED")], **change)
+                self.assertEqual(code, 5)
+                self.assertEqual(out["dry_run_calls"], [])
 
 
 if __name__ == "__main__":
