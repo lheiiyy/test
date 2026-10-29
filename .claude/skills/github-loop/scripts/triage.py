@@ -8,10 +8,15 @@ idle scheduled run costs almost no tokens: if `work` is empty, the run just says
     python scripts/triage.py --repo lheiiyy/test --owner lheiiyy
 
 Prints one JSON object:
-  work       issues that passed every guard (oldest first), each with next_turn and reply_header
-  needs_leo  to-code issues the guard parked (turn cap, missing Goal or Acceptance criteria)
-  stale      issues stuck on code-working longer than --stale-minutes (a crashed run)
-  ignored    to-code issues skipped, with the reason
+  work       issues that passed every guard (oldest first), each with next_turn and reply_header.
+             Autopilot entries also carry work_type (plan, revise, build, continue), phase and notes.
+  needs_leo  issues the guard parked (turn, reply or revision cap; missing Goal or Acceptance criteria)
+  stale      issues stuck on code-working longer than --stale-minutes, or --build-stale-minutes
+             for an approved autopilot build (a crashed run)
+  ignored    issues skipped, with the reason (for example "waiting for the owner's APPROVED")
+
+Autopilot issues labeled awaiting-approval or needs-leo are scanned for the owner's
+APPROVED, REVISE: or CONTINUE: comment, so Leo never has to touch a label.
   summary    "No new work." or a one-line count
 
 It also finds who applied the to-code label (from the issue events), so the
@@ -30,7 +35,7 @@ import sys
 from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from loop_guard import decide  # noqa: E402
+from loop_guard import approval_status, decide, is_autopilot  # noqa: E402
 
 
 class ApiError(Exception):
@@ -64,7 +69,8 @@ def latest_label_event(events, label):
     return max(found, key=lambda e: e.get("created_at", ""), default=None)
 
 
-def triage(repo, owner, max_turn, stale_minutes, now, fixtures):
+def triage(repo, owner, max_turn, stale_minutes, now, fixtures, build_stale_minutes=180,
+           max_replies=10, max_revisions=3):
     issues = fetch(f"repos/{repo}/issues?state=open&per_page=100", fixtures, "issues.json")
     result = {"repo": repo, "owner": owner, "work": [], "needs_leo": [], "stale": [], "ignored": []}
 
@@ -73,32 +79,42 @@ def triage(repo, owner, max_turn, stale_minutes, now, fixtures):
             continue  # the issues endpoint also returns PRs
         number = issue["number"]
         labels = {l["name"] if isinstance(l, dict) else l for l in issue.get("labels") or []}
-        if not labels & {"to-code", "code-working"}:
+        autopilot = is_autopilot(issue.get("body"))
+        watched = {"to-code", "code-working"} | ({"awaiting-approval", "needs-leo"} if autopilot else set())
+        if not labels & watched or "done" in labels:
             continue
         comments = fetch(f"repos/{repo}/issues/{number}/comments?per_page=100", fixtures, f"{number}.comments.json")
-        events = fetch(f"repos/{repo}/issues/{number}/events?per_page=100", fixtures, f"{number}.events.json")
         issue = dict(issue, comments=comments)
+        needs_events = bool(labels & {"to-code", "code-working"})
+        events = fetch(f"repos/{repo}/issues/{number}/events?per_page=100", fixtures,
+                       f"{number}.events.json") if needs_events else []
 
         if "code-working" in labels:
+            building = autopilot and approval_status(issue, owner)["approved"]
+            limit = build_stale_minutes if building else stale_minutes
             claim = latest_label_event(events, "code-working")
             started = parse_time(claim["created_at"]) if claim else parse_time(issue["updated_at"])
             minutes = int((now - started).total_seconds() // 60)
-            if minutes >= stale_minutes:
+            if minutes >= limit:
                 turn_info = decide(issue, owner, max_turn)
-                result["stale"].append({"number": number, "title": issue.get("title", ""),
-                                        "minutes": minutes, "next_turn": turn_info["next_turn"]})
+                result["stale"].append({"number": number, "title": issue.get("title", ""), "minutes": minutes,
+                                        "next_turn": turn_info["next_turn"], "phase": 2 if building else 1})
             else:
                 result["ignored"].append({"number": number, "reason": f"claimed {minutes} min ago, still running"})
             continue
 
-        event = latest_label_event(events, "to-code")
+        event = latest_label_event(events, "to-code") if "to-code" in labels else None
         labeled_by = ((event or {}).get("actor") or {}).get("login")
-        decision = decide(issue, owner, max_turn, labeled_by)
-        entry = {"number": number, "title": issue.get("title", ""), "labeled_by": labeled_by}
+        decision = decide(issue, owner, max_turn, labeled_by, max_replies, max_revisions)
+        entry = {"number": number, "title": issue.get("title", ""), "labeled_by": labeled_by, "mode": decision["mode"]}
         if decision["action"] == "proceed":
-            result["work"].append(dict(entry, next_turn=decision["next_turn"], reply_header=decision["reply_header"]))
+            item = dict(entry, next_turn=decision["next_turn"], reply_header=decision["reply_header"])
+            if autopilot:
+                item.update(work_type=decision["work_type"], phase=decision["phase"], notes=decision["notes"])
+            result["work"].append(item)
         elif decision["action"] == "needs-leo":
-            result["needs_leo"].append(dict(entry, next_turn=decision["next_turn"], reason=decision["reason"]))
+            result["needs_leo"].append(dict(entry, next_turn=decision["next_turn"], reason=decision["reason"],
+                                            phase=decision.get("phase", 1)))
         else:
             result["ignored"].append(dict(entry, reason=decision["reason"]))
 
@@ -117,15 +133,19 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--repo", required=True, help="owner/name")
     ap.add_argument("--owner", required=True, help="login of the repo owner")
-    ap.add_argument("--max-turn", type=int, default=4)
+    ap.add_argument("--max-turn", type=int, default=4, help="classic mode turn cap")
     ap.add_argument("--stale-minutes", type=int, default=90)
+    ap.add_argument("--build-stale-minutes", type=int, default=180, help="stale limit for approved autopilot builds")
+    ap.add_argument("--max-replies", type=int, default=10, help="autopilot executor reply cap")
+    ap.add_argument("--max-revisions", type=int, default=3, help="autopilot plan revision cap")
     ap.add_argument("--fixtures", default=None, help="directory of JSON fixtures instead of the network")
     ap.add_argument("--now", default=None, help="ISO time to treat as now (for tests)")
     args = ap.parse_args()
 
     now = parse_time(args.now) if args.now else datetime.now(timezone.utc)
     try:
-        result = triage(args.repo, args.owner, args.max_turn, args.stale_minutes, now, args.fixtures)
+        result = triage(args.repo, args.owner, args.max_turn, args.stale_minutes, now, args.fixtures,
+                        args.build_stale_minutes, args.max_replies, args.max_revisions)
     except (ApiError, KeyError, ValueError) as e:
         json.dump({"error": str(e), "summary": "TRIAGE FAILED, not an empty queue"}, sys.stdout, indent=2)
         print()

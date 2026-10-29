@@ -254,6 +254,75 @@ class TriageTests(unittest.TestCase):
         self.assertNotEqual(out["summary"], "No new work.")
 
 
+class TriageAutopilotTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.dir = tempfile.mkdtemp()
+
+        def ap(number, labels):
+            return dict(ap_issue(labels), number=number, title=f"autopilot {number}", comments=0)
+
+        revisions = []
+        for t in range(4):
+            revisions += [plan_reply(2 + t), c("REVISE: again")]
+        files = {
+            "issues.json": [
+                ap(20, ["to-code"]),                      # new request: plan
+                ap(21, ["awaiting-approval"]),            # approved: build
+                ap(22, ["awaiting-approval"]),            # no reply yet: waiting
+                ap(23, ["needs-leo"]),                    # CONTINUE: resume phase 2
+                issue(24, ["needs-leo"]),                 # classic parked issue: not scanned
+                ap(25, ["code-working"]),                 # approved build, 120 min: still running
+                ap(26, ["code-working"]),                 # approved build, 200 min: stale
+                ap(27, ["code-working"]),                 # plan run, 100 min: stale
+                ap(28, ["done", "awaiting-approval"]),    # done: skipped
+                ap(29, ["awaiting-approval"]),            # revision cap: needs Leo
+            ],
+            "20.events.json": [event("to-code", OWNER, "2026-10-29T11:50:00Z")],
+            "21.comments.json": [plan_reply(), c("APPROVED")],
+            "22.comments.json": [plan_reply()],
+            "23.comments.json": [plan_reply(), c("APPROVED"), question(2, 3), c("CONTINUE: keep the old name")],
+            "25.comments.json": [plan_reply(), c("APPROVED")],
+            "25.events.json": [event("code-working", OWNER, "2026-10-29T10:00:00Z")],
+            "26.comments.json": [plan_reply(), c("APPROVED")],
+            "26.events.json": [event("code-working", OWNER, "2026-10-29T08:40:00Z")],
+            "27.events.json": [event("code-working", OWNER, "2026-10-29T10:20:00Z")],
+            "29.comments.json": revisions,
+        }
+        for name, data in files.items():
+            with open(os.path.join(cls.dir, name), "w") as f:
+                json.dump(data, f)
+        cls.code, cls.out, cls.err = run(os.path.join(SCRIPTS, "triage.py"), "--repo", "o/r", "--owner", OWNER,
+                                         "--fixtures", cls.dir, "--now", NOW)
+
+    def test_exit_ok(self):
+        self.assertEqual(self.code, 0, self.err)
+
+    def test_typed_work_in_order(self):
+        got = [(w["number"], w["work_type"], w["phase"]) for w in self.out["work"]]
+        self.assertEqual(got, [(20, "plan", 1), (21, "build", 2), (23, "continue", 2)])
+        self.assertEqual(self.out["work"][2]["notes"], "keep the old name")
+        self.assertIn("type=summary phase=2", self.out["work"][1]["reply_header"])
+
+    def test_waiting_plan_is_ignored_not_work(self):
+        self.assertTrue(any(i["number"] == 22 and "waiting" in i["reason"] for i in self.out["ignored"]))
+
+    def test_classic_parked_and_done_are_not_scanned(self):
+        seen = {x["number"] for k in ("work", "needs_leo", "stale", "ignored") for x in self.out[k]}
+        self.assertNotIn(24, seen)
+        self.assertNotIn(28, seen)
+
+    def test_build_gets_the_longer_stale_limit(self):
+        self.assertTrue(any(i["number"] == 25 and "still running" in i["reason"] for i in self.out["ignored"]))
+        stale = {s["number"]: s for s in self.out["stale"]}
+        self.assertEqual(sorted(stale), [26, 27])
+        self.assertEqual((stale[26]["phase"], stale[26]["minutes"]), (2, 200))
+        self.assertEqual((stale[27]["phase"], stale[27]["minutes"]), (1, 100))
+
+    def test_revision_cap_needs_leo_with_phase(self):
+        self.assertEqual([(n["number"], n["phase"]) for n in self.out["needs_leo"]], [(29, 1)])
+
+
 class LoopGhTests(unittest.TestCase):
     def reply_file(self, text):
         f = tempfile.NamedTemporaryFile("w", suffix=".md", delete=False)
