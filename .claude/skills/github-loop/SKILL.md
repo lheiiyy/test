@@ -35,7 +35,7 @@ A task message then has these sections: `## Goal`, `## Context` (file paths and 
 
 ## Executor procedure
 
-Three scripts do every deterministic step, so a run spends tokens only on the actual work. Run them from the skill folder (`.claude/skills/github-loop/` in a repo).
+Three scripts do every deterministic step, so a run spends tokens only on the actual work. Run them from the skill folder (`.claude/skills/github-loop/` in a repo), after `export PYTHONDONTWRITEBYTECODE=1` so no `__pycache__` files appear in the repo.
 
 1. **Triage** (read-only, one call, also for event-woken runs):
    `python scripts/triage.py --repo <owner>/<repo> --owner <repo owner login>`
