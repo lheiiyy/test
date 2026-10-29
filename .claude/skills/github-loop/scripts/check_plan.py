@@ -5,12 +5,14 @@
     check_plan.py docs/plan-x.md --changed docs/plan-x.md other/file.js     (tests)
 
 Checks:
-- the five sections exist and are not empty: Business plan, Architecture,
-  Task breakdown, Test plan, Merge plan (## or ### headings, numbering optional);
+- the six sections exist and are not empty: Business plan, Architecture,
+  Task breakdown, Test plan, Merge plan, Readiness (## or ### headings, numbering optional);
 - the business plan covers problem, users, value, scope, out of scope, success
   metrics, risks and effort; the architecture covers components, data flow, schema,
   integration points, migration and decisions; the task breakdown has pass/fail
-  checks; the merge plan names the branch and the method;
+  checks and the responsible agent; the merge plan names the branch, the method and
+  the release policy (deploy or no deploy); the readiness section uses the statuses
+  READY, NEEDS SETUP, BLOCKED, NOT REQUIRED or UNVERIFIED;
 - the last non-empty line is exactly AWAITING APPROVAL;
 - with --git-base or --changed: the plan is the only changed file, because
   Phase 1 makes no code changes.
@@ -24,14 +26,15 @@ import re
 import subprocess
 import sys
 
-SECTIONS = ["Business plan", "Architecture", "Task breakdown", "Test plan", "Merge plan"]
+SECTIONS = ["Business plan", "Architecture", "Task breakdown", "Test plan", "Merge plan", "Readiness"]
 TOPICS = {
     "Business plan": ["problem", "user", "value", "scope", "out of scope|out-of-scope",
                       "success metric", "risk", "effort"],
     "Architecture": ["component", "data flow", "schema", "integration", "migration", "decision"],
-    "Task breakdown": ["pass|fail|check"],
+    "Task breakdown": ["pass|fail|check", "code|lead"],
     "Test plan": ["test"],
-    "Merge plan": ["branch", "method"],
+    "Merge plan": ["branch", "method", "deploy|release"],
+    "Readiness": ["ready|needs setup|blocked|not required|unverified"],
 }
 HEADING = re.compile(r"^(#{2,3})\s+(.+?)\s*$", re.MULTILINE)
 

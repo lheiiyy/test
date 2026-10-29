@@ -1,81 +1,92 @@
-# One-time setup (all steps work from a tablet browser, except the optional token step)
+# One-time setup
 
-Do these in order. After each step, tell Leo what to expect and wait for "done" before the next. Steps 1-7 are enough for the main route.
+Do these in order, and confirm each step before the next. Everything works from a tablet browser except where noted.
 
-## Main route: Claude Code scheduled task with a GitHub trigger
+## 1. Repository
 
-Uses the Pro subscription, no API key, no YAML, no terminal.
+1. **Commit this skill** as `.claude/skills/github-loop/` through a PR. Scheduled runs read it from the default branch.
+2. **Create the labels.** Run `python scripts/readiness.py --repo <o>/<r> --owner <owner> --create-labels`, or create them by hand:
 
-1. **Install the Claude GitHub App** on the repo: github.com/apps/claude. Repo admin is needed.
-2. **Create the five labels** in the repo (Issues → Labels → New label): `to-code`, `code-working`, `to-chat`, `needs-leo`, `done`.
-3. **Add a short `CLAUDE.md`** at the repo root with stack rules (for example "Apps Script V8, no clasp", "single-file HTML, no build step"). Claude reads it on every run, so keep it under 30 lines.
-4. **Commit this skill** to the repo as `.claude/skills/github-loop/` (SKILL.md, scripts/, references/) using GitHub's Add file → Upload files.
-5. **Protect `main`** (Settings → Branches → Add rule) so the executor can only land work through `claude/` branches and PRs that Leo merges.
-6. **Create the scheduled task** at claude.ai/code/routines. Trigger: GitHub event → Issues → labeled, filter label = `to-code`, author = the repo owner. Prompt: "Follow .claude/skills/github-loop/SKILL.md as the executor for the issue in the event."
-7. **Run one test issue** (see the live smoke test in the final hand-off message).
+   | Label | Color |
+   |---|---|
+   | `to-code` | `0E8A16` |
+   | `code-working` | `FBCA04` |
+   | `awaiting-approval` | `5319E7` |
+   | `to-review` | `1D76DB` |
+   | `reviewed` | `0052CC` |
+   | `needs-leo` | `D93F0B` |
+   | `done` | `6E7781` |
+   | `to-chat` | classic mode only |
+3. **Add the issue form** `.github/ISSUE_TEMPLATE/autopilot.yml`, copied from `lheiiyy/test`. It files the request with `to-code` already applied.
+4. **Keep one short `CLAUDE.md` per project:** the stack rules and the folders the loop may touch.
+5. **Protect `main` the loop-compatible way:** require pull requests and status checks, but do **not** require approvals. Every agent posts as the owner, and GitHub never lets a PR author approve their own PR, so a required-approval rule stops every merge. If Leo wants to approve each merge himself, he taps Merge, which brings automation to about 80%.
 
-## Alternative route: scheduled task without the GitHub App (what Leo's other repos use)
+## 2. Two scheduled tasks: Code and Lead
 
-The GitHub-event trigger can only be created in the claude.ai UI, and it needs the Claude GitHub App. A cron scheduled task needs neither, and can be made from chat with the scheduled-task tools:
-- **Hourly check:** a scheduled task that runs `scripts/triage.py` and ends with "No new work." when nothing is waiting. The script does the listing, the guard, the label-actor check and stale-claim detection, so an idle run is one command. Leo's TLMI-AI tasks run hourly with the same shape and succeed, so the "5 runs a day on Pro" limit from the launch post does not appear to be enforced. Suggested prompt, short on purpose:
-  > Clone `<owner>/<repo>`. Run `export PYTHONDONTWRITEBYTECODE=1`, then `python .claude/skills/github-loop/scripts/triage.py --repo <owner>/<repo> --owner <owner>` from the repo root. If the summary is "No new work.", reply with exactly that and stop. If triage fails, say so and stop. Otherwise follow `.claude/skills/github-loop/SKILL.md` (executor procedure, from step 2) for the first `work` entry; if it has a `work_type`, follow `.claude/skills/github-loop/references/autopilot.md`. Merge only with `scripts/loop_gh.py merge`, which checks the owner's APPROVED comment. Never push to `main`, never force-push, never add `to-code`. Final message: one line in Taglish.
-- **Poke-only:** a scheduled task with no schedule at all, started by `fire_trigger` right after the planner creates the issue. It costs nothing while idle, but a label added by hand in the GitHub app does not wake it.
-- Use REST (`gh api`) everywhere; GraphQL is blocked in cloud sessions.
+Both are hourly cloud tasks. Recommended settings: permission mode "auto", only the Claude Code Remote connector (least privilege), and a Sonnet model to save the shared Pro budget.
 
-## Autopilot setup (once per repo)
+**Code task** (for example at minute 03):
+> You are Code, the Engineer of the github-loop for `<o>/<r>` (owner `<owner>`, who reads Taglish). Clone the repo into a fresh empty directory. Run `export PYTHONDONTWRITEBYTECODE=1`, then `python3 .claude/skills/github-loop/scripts/triage.py --repo <o>/<r> --owner <owner> --role code`. If the summary is "No new work.", end with exactly that. If triage fails, say so and stop. Otherwise follow `.claude/skills/github-loop/SKILL.md` (Every run, from step 2), and `references/autopilot.md` for autopilot work. Use REST (`gh api`) only. Merge only with `scripts/loop_gh.py merge`; if a permission rule refuses it, park and ask Leo for one tap, and never work around a refusal. Never push to main, force-push, add `to-code`, commit secrets, or delete files outside the approved plan. Act only on the owner's issues and comments. One issue per run. Final message: one line in Taglish, or exactly "No new work."
 
-1. **Create the label** `awaiting-approval` (color `5319E7`), next to the five above.
-2. **Add the issue form** `.github/ISSUE_TEMPLATE/autopilot.yml` (copy it from `lheiiyy/test`). It files Leo's template with `to-code` already applied, so a request is one form in the GitHub web UI.
-3. **Use the hourly scheduled task** above. It already routes autopilot work.
-4. **Expect two touches from Leo per feature:** file the request, then comment `APPROVED` on the plan. If a permission rule blocks the scripted merge, the executor parks and asks for one Merge tap, then `CONTINUE: merged`.
+**Lead task** (for example at minute 33, so a review follows a build by about 30 minutes):
+> You are the Lead (Claude Cowork as Technical Lead) of the github-loop for `<o>/<r>` (owner `<owner>`). Clone the repo into a fresh empty directory. Run `export PYTHONDONTWRITEBYTECODE=1`, then `python3 .claude/skills/github-loop/scripts/triage.py --repo <o>/<r> --owner <owner> --role lead`. If the summary is "No new work.", end with exactly that. If triage fails, say so and stop. Otherwise follow `.claude/skills/github-loop/references/lead.md` for the first `work` entry: plan with a readiness check, or review independently. Never write application code, never merge, never relay an approval (that happens only in a chat with Leo), never add `to-code`. Use REST only. Act only on the owner's issues and comments. Final message: one line in Taglish, or exactly "No new work."
 
-## Optional: return path from chat
+Facts to keep in mind:
+- **GitHub access is per repository.** The scheduled session reached `lheiiyy/test`. Test any new repo with one run before relying on it.
+- **Starting another task early is refused from chat on this account** ("Run Routine Now"), so hand-offs wait for the next hourly run.
 
-- Say "check the loop" in any chat, or
-- add one daily scheduled chat task: "List open issues labeled to-chat in <repo>, summarise each in two lines, and stop."
-- Only if Leo wants chat to create issues itself: add GitHub's remote MCP server (https://api.githubcopilot.com/mcp/) as a custom connector, set only the issue and comment write tools to "Always allow", and test for a week. Reliability bugs are open on this, so the paste-and-label fallback stays valid.
+## 3. CI (recommended)
 
-## Optional fallback: GitHub Action (needs a one-year token made in a terminal)
-
-Only needed if scheduled-task run limits get in the way. A free browser Codespace can stand in for the terminal: install Claude Code there, run `claude setup-token`, copy the token at once, and save it as the repo secret `CLAUDE_CODE_OAUTH_TOKEN`. Renew yearly. This flow is documented but has not been tested on a tablet.
-
-Save as `.github/workflows/claude-loop.yml`:
+Add `.github/workflows/tests.yml` so a check gates every merge. Then require the `test` check on `main`, and write "CI required: yes" in each plan's merge plan; Code then merges with `--require-checks`. Whether the session token may push workflow files is UNVERIFIED. If the push is refused, Leo uploads the file with GitHub's Add file button.
 
 ```yaml
-name: claude-loop
+name: tests
 on:
-  issues:
-    types: [labeled]
-concurrency:
-  group: claude-${{ github.event.issue.number }}
-  cancel-in-progress: false
+  pull_request:
+  push:
+    branches: [main]
 jobs:
-  claude:
-    if: github.event.label.name == 'to-code' && github.event.sender.login == github.repository_owner
+  test:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-    permissions:
-      contents: write
-      pull-requests: write
-      issues: write
-      id-token: write
-      actions: read
     steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 1
-      - uses: anthropics/claude-code-action@v1
-        with:
-          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          prompt: "Follow .claude/skills/github-loop/SKILL.md as the executor for issue #${{ github.event.issue.number }}."
-          claude_args: |
-            --max-turns 8
+      - uses: actions/checkout@v4
+      - run: python3 -B .claude/skills/github-loop/evals/test_scripts.py
+      # add the project's own test command here, for example: node --test odometer-trips/tests/
 ```
 
-Leave `allowed_bots` empty and never pass `allowed_non_write_users`. This YAML is a design based on the docs and has not been run end to end.
+## 4. Release policy
 
-## Known limits to repeat to Leo
+Each plan states one of these:
 
-- Chat cannot be woken by GitHub. The loop is automatic only up to Claude Code's reply.
-- The Pro daily limit for scheduled runs is unconfirmed (launch post says 5 per day, current docs list hourly caps). Plan for 5.
-- Scheduled tasks are a research preview, so behavior may change.
+| Policy | What happens after the merge |
+|---|---|
+| `no deploy` | Nothing |
+| `staging automatic` | Code deploys through the authorized workflow and verifies the deployment |
+| `production after Leo's CONTINUE: release` | Code parks; Leo's reply releases |
+
+- **GitHub Pages:** Leo enables it once in Settings → Pages. The session proxy blocks the Pages API.
+- **Apps Script:** deploys stay manual. clasp is not available in cloud runs, and credentials are never committed.
+
+## 5. Readiness before the first request
+
+Run `python scripts/readiness.py --repo <o>/<r> --owner <owner> --markdown` and fix the NEEDS SETUP rows. The Lead repeats it in every plan.
+
+## Leo's one-time checklist
+
+- [ ] Approve the skill PR.
+- [ ] Do not turn on "required approvals" for `main`. If protection exists, require status checks only.
+- [ ] Try the Autopilot issue form once (browser and phone).
+- [ ] When a plan deploys: enable GitHub Pages, or keep Apps Script deploys manual.
+
+## Other routes (kept for reference)
+
+- **GitHub App with an event trigger,** instead of hourly polling. It is created in the claude.ai UI after installing github.com/apps/claude, with the trigger "Issues → labeled".
+- **GitHub Action fallback** with `anthropics/claude-code-action@v1` and a `CLAUDE_CODE_OAUTH_TOKEN` secret, made with `claude setup-token` in a terminal or Codespace. Run it on `issues: labeled`, only when `github.event.sender.login == github.repository_owner`. This is untested on a tablet.
+- **Return path in chat:** say "check the loop".
+
+## Known limits
+
+- **Chat cannot be woken by GitHub.** When Leo is away, the Lead runs as a scheduled task.
+- **Hourly cadence:** a plan within about 1 hour of the request, a build within 1 hour of approval, a review about 30 minutes later, and the merge about 30 minutes after that.
+- **Shared budget:** all scheduled tasks and chat share the Pro budget.
+- **Research preview:** scheduled tasks may change.

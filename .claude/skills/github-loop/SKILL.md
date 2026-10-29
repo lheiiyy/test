@@ -1,91 +1,132 @@
 ---
 name: github-loop
-description: Hand coding tasks between Claude chat (planner) and Claude Code (executor) through GitHub Issues, with no manual copy-paste relay, including an autopilot mode that goes from business plan to merged, tested code with one APPROVED comment from Leo. Use this whenever Leo says "send to Code", "hand this to Claude Code", "check the loop", "set up the loop for repo X", "autopilot", "plan then build", or replies APPROVED, REVISE or CONTINUE on an issue, or when an issue labeled to-code, awaiting-approval or to-chat is in front of you, or when a scheduled task fires on a GitHub issue event. Also use it when drafting an issue that Claude Code should pick up, even if the word "loop" is never said.
+description: Coordinate Leo (Product Owner), Claude Cowork (Technical Lead) and Claude Code (Engineer) through GitHub Issues and pull requests, with no copy-paste relay. Autopilot mode runs plan with readiness check, one approval, build, independent review, fix, scripted merge, verify, deploy when authorized, and report. Use whenever Leo says "send to Code", "check the loop", "set up the loop", "autopilot", "plan then build" or "review the PR", or replies APPROVED, REVISE or CONTINUE on an issue. Also use it when an issue labeled to-code, awaiting-approval, to-review, reviewed or to-chat is in front of you, when a scheduled task fires for the loop, or when drafting an issue for Claude Code, even if "loop" is never said.
 ---
 
 # github-loop
 
-Two Claudes cannot talk to each other directly, but both can read and write GitHub Issues. This skill makes an issue the shared message thread, and labels the signal for whose turn it is. Claude Code can wake itself on a GitHub event. Claude chat cannot, so the return trip happens when Leo opens a chat and says "check the loop" (or a daily scheduled chat task does it). Be honest about that in every setup conversation: the automation ends at Claude Code's reply.
+GitHub is the shared source of truth. Issues carry requests and hand-offs, pull requests carry code, and labels say whose turn it is. Every agent posts from Leo's account, so the first line of each agent comment is a header that names the writer.
 
-**Two modes.** *Classic*: chat writes a task (Goal, Acceptance criteria) and the two sides trade replies. *Autopilot*: Leo files one request in the template format (`references/task-template.md`, or the Autopilot issue form), the executor posts a plan, Leo comments `APPROVED`, and the executor builds, tests, debugs, merges, updates the docs and closes the issue. Chat is not needed in autopilot. An issue is autopilot when its body has Phase 1 and Phase 2 headings. Full executor steps: `references/autopilot.md`.
+## Team and authority
 
-## Decide your role first
-
-- **Repo checkout present, or woken by a GitHub event** → you are the **executor** (Code side). Follow "Executor procedure".
-- **Running in claude.ai chat** → you are the **planner**. Follow "Planner procedure".
-- **Asked to set up the loop** → read `references/setup.md` and walk Leo through it one step at a time. He works from a tablet and a browser, so every step must be doable in the GitHub web UI and claude.ai.
-
-## Labels (one issue = one task)
-
-| Label | Set by | Meaning |
+| Who | Owns | Acts through |
 |---|---|---|
-| `to-code` | planner or Leo | Ready for the executor. This label is the only trigger. |
-| `code-working` | executor | Claimed, so a second run does not start. |
-| `to-chat` | executor | Result or question waiting for the planner (classic). |
-| `awaiting-approval` | executor | Autopilot plan posted; waiting for Leo's `APPROVED` or `REVISE:` comment. |
-| `needs-leo` | either | A human must decide. Classic stops here; autopilot resumes on Leo's `CONTINUE:` or `REVISE:` comment. |
-| `done` | either | Finished. Close the issue. |
+| **Leo**, Product Owner | Goals, requirements, the one plan approval, scope changes, material risks, production releases (release policy) | The request (issue form), then `APPROVED`, `REVISE: <notes>` or `CONTINUE: <answer>` comments |
+| **Lead**, Claude Cowork (Technical Lead) | Inspection, readiness audit, the plan, independent review, verification, escalation | A chat with Leo, or the hourly Lead scheduled task (`--role lead`). Steps: `references/lead.md` |
+| **Code**, Claude Code (Engineer) | Branches, code, tests, PRs, fixes, the scripted merge, post-merge checks, authorized deploys, the report | The hourly Code scheduled task (`--role code`). Steps: `references/autopilot.md` |
+| **GitHub** | The record: issues, PRs, commits, checks, verdicts | The `gh api` REST calls in `scripts/` |
 
-## Message format
+**Decide your role first:**
+- In a chat with Leo → you are the Lead.
+- In a scheduled run → the role is the one in the task prompt.
+- Asked to set up the loop → read `references/setup.md` and walk Leo through it one step at a time. Every step must work from a tablet browser.
 
-Every message the two sides post starts with a header line, so turns can be counted without guessing:
+- Approving the plan authorizes the routine work in its scope, including the merge.
+- It never overrides platform permissions, repository rules or security controls.
+- Self-review is not review: the Lead reviews from a different session than the one that built.
+- In this loop, plan approval replaces the "Leo approves merge" gate in the Ship row of web-app-project-planning. Production deploys still follow the plan's release policy.
+
+## Lifecycle (autopilot mode)
+
+INSPECT → PLAN + READINESS (Lead) → APPROVE ONCE (Leo) → IMPLEMENT + TEST (Code) → REVIEW (Lead) → FIX (Code) → MERGE through the scripted gate (Code) → VERIFY (Code) → DEPLOY WHEN AUTHORIZED (Code) → REPORT (Code; the issue closes).
+
+An issue is in autopilot mode when its body has Phase 1 and Phase 2 headings (`references/task-template.md`, or the Autopilot issue form). Any other issue is in **classic mode**: chat writes a task with Goal and Acceptance criteria, Code replies, and the turn cap is 4 (see the end of this file).
+
+**What Leo does per feature:** files the request, and approves the plan (`APPROVED` on the issue, or in a chat with the Lead). If a platform rule refuses the merge, he also taps Merge once and replies `CONTINUE: merged`. Releases follow the release policy.
+
+## Labels: whose turn it is
+
+| Label | Next actor |
+|---|---|
+| `to-code` | Lead plans (autopilot); Code works (classic). The only label that starts work, and Leo or the issue form adds it. |
+| `awaiting-approval` | Leo: `APPROVED` or `REVISE: <notes>` |
+| `code-working` | A run of either role holds the claim |
+| `to-review` | Lead reviews the exact head that Code named |
+| `reviewed` | Code merges (verdict approved) or fixes (changes requested) |
+| `needs-leo` | Leo: `CONTINUE: <answer>` or `REVISE: <notes>`. Classic mode stops here. |
+| `to-chat` | Classic only: the chat planner |
+| `done` | Finished and closed |
+
+## Message headers
+
+The first line of every agent comment:
 
 ```
-<!-- loop:v1 from=chat|code type=task|status|result|question|plan|summary [phase=1|2] turn=N -->
+<!-- loop:v1 from=code|lead|chat type=TYPE [phase=1|2] [pr=N head=SHA] [verdict=approved|changes] turn=N -->
 ```
 
-The header is always the first line of an executor comment. Autopilot plans say `type=plan phase=1`, and the final report says `type=summary phase=2`.
+| Type | From | Rule |
+|---|---|---|
+| `plan` | lead | phase=1 |
+| `result` | code | phase=2 adds `pr` and the exact `head` |
+| `verdict` | lead | Names `pr`, `head` and `verdict`. Ends with `Reviewed head <sha>`, then `VERDICT: APPROVED` or `VERDICT: CHANGES REQUESTED`. |
+| `summary` | code | phase=2. Carries five report lines: Implemented and tested / Reviewed / Merged / Deployed / Blocked or unverified. |
+| `question` | either | Used by `park` |
+| `approval` | lead | Relays Leo's approval from a chat, quoting him. Never posted from a scheduled run. |
+| `task`, `result`, `status` | chat, code | Classic mode |
 
-A task message then has these sections: `## Goal`, `## Context` (file paths and links, never pasted code), `## Acceptance criteria`, `## Constraints` (for example "single-file HTML", "Apps Script V8", "no new dependencies"). Clear acceptance criteria are what let the executor finish without asking, which is the whole point of unattended runs.
+## Every run, both roles
 
-## Executor procedure
+Run the scripts from the skill folder (`.claude/skills/github-loop/` in a repo) after `export PYTHONDONTWRITEBYTECODE=1`. Use REST (`gh api`) only, because GraphQL and `gh pr create` fail in cloud sessions.
+- Open a PR: `gh api -X POST repos/<o>/<r>/pulls -f title=... -f head=claude/... -f base=main -F body=@pr.md`. Never open a draft, because REST cannot mark it ready.
+- Add `--dry-run` to any `loop_gh.py` command to see its calls without sending them.
+- Never report a hand-off that did not succeed.
 
-Three scripts do every deterministic step, so a run spends tokens only on the actual work. Run them from the skill folder (`.claude/skills/github-loop/` in a repo), after `export PYTHONDONTWRITEBYTECODE=1` so no `__pycache__` files appear in the repo.
+1. **Triage:** `python scripts/triage.py --repo <o>/<r> --owner <owner> --role <code|lead>`.
+   - `No new work.` → say exactly that and stop.
+   - Exit code 2 or `TRIAGE FAILED` → report the error and stop. A failure is never "No new work."
+2. **Park (Code role only).** For each `needs_leo` and `stale` entry, run `python scripts/loop_gh.py park --repo <o>/<r> --issue <N> --turn <next_turn> --reason "<reason>"`. Add `--phase <phase>` only for autopilot entries (`mode: autopilot`). For a stale entry, the reason is "the previous run stopped after claiming; reply CONTINUE: to retry (re-apply to-code in classic mode)".
+3. **One issue per run.** Take the first `work` entry. Lead work follows `references/lead.md`, Code work follows `references/autopilot.md`, and classic work follows "Classic mode" below.
 
-1. **Triage** (read-only, one call, also for event-woken runs):
-   `python scripts/triage.py --repo <owner>/<repo> --owner <repo owner login>`
-   It lists open `to-code` issues, runs the guard on each, finds who applied the label, and flags stale claims. Read only its `summary` and the lists.
-   - Exit code 2 or `TRIAGE FAILED` → say the triage failed and give the error. Never say "No new work." for a failure. Stop.
-   - `summary` is `No new work.` → say exactly that and stop. Do not read anything else.
-2. **Park what needs a human.** For each `needs_leo` entry: `python scripts/loop_gh.py park --repo <o>/<r> --issue <N> --turn <next_turn> --reason "<its reason>"`, adding `--phase <phase>` for autopilot entries. For each `stale` entry (a run stopped after claiming): same command with the reason "the previous run stopped after claiming this issue; reply CONTINUE: to retry (or re-apply to-code in classic mode)".
-3. **Claim one issue** (one issue per run): take the first `work` entry. **If it has a `work_type`, follow `references/autopilot.md` instead of steps 4 to 7.** Otherwise `python scripts/loop_gh.py claim --repo <o>/<r> --issue <N>`. Exit code 3 means another run has it, so stop.
-4. Do the work. Read only the files the issue names. Work on a `claude/` branch and open a PR. Never push to `main`, never edit `.github/workflows` unless the task says so.
-5. If the task turns out to be ambiguous or blocked, stop and ask with `loop_gh.py park --reason "<all questions in one batch>"`. A wrong guess costs more tokens than a question.
-6. Write `reply.md`: the entry's `reply_header` line, then at most 150 words: what changed, the PR or branch link, how it was checked, open questions.
-7. **Reply:** `python scripts/loop_gh.py reply --repo <o>/<r> --issue <N> --file reply.md --turn <next_turn> --add to-chat` (use `--add done` only when the task said to finish the thread). It validates first, and posts nothing if the check fails: fix what it reports and run it again. On success it posts the comment, removes `code-working` and adds the hand-off label.
+## The merge gate (`loop_gh.py merge`)
 
-## GitHub calls (REST only)
+The script merges only when all of these hold:
+- The owner approved the latest plan.
+- The latest Lead verdict approves the PR's exact head.
+- No check run or commit status on that head is failing or pending. When the plan requires CI, at least one check must exist.
+- The PR is open, not a draft, on a `claude/` branch, against `main`, and cleanly mergeable.
 
-Cloud sessions block GraphQL, so `gh issue view`, `gh issue edit` and `gh pr create` fail there. The scripts already use `gh api`. For anything they do not cover, such as opening the PR:
-- Open a PR, ready for review: `gh api -X POST repos/<o>/<r>/pulls -f title=... -f head=claude/... -f base=main -F body=@pr.md`
-- Add `--dry-run` to any `loop_gh.py` command to see the exact calls without sending them.
-- If the scripts are missing, the same steps work by hand: `gh api -X POST repos/<o>/<r>/issues/<N>/comments -F body=@reply.md`, `gh api -X POST repos/<o>/<r>/issues/<N>/labels -f 'labels[]=to-chat'`, `gh api -X DELETE repos/<o>/<r>/issues/<N>/labels/code-working`. Run `loop_guard.py` first, and never add `to-code`.
+The head SHA is pinned. Anything else returns an exit code, and the run parks with that reason. Never work around a refusal, whether it comes from the script, GitHub or the platform.
 
-## Planner procedure
+## Guards (why each exists)
 
-- **Hand off a task:** draft the issue with the header (`from=chat type=task turn=1`) and all four sections. If a write-capable GitHub connector works, create it with the `to-code` label. Otherwise give Leo the text to paste into GitHub's New issue page, and tell him the one extra step: add the `to-code` label. Do not pretend the handoff happened if the write did not succeed.
-- **Check the loop:** list open issues labeled `to-chat`, summarise each in two lines, then either post a follow-up task (turn = last turn + 1, and re-apply `to-code`) or ask Leo what he wants. Stop when the thread is at the turn cap. Also list `awaiting-approval` issues and remind Leo that one `APPROVED` comment starts the build.
-- **Autopilot request:** fill `references/task-template.md` with Leo's goal, project, repo, stack, users and feature name, and give it to him for the Autopilot issue form or a new issue with `to-code`. Never comment `APPROVED` for him: approval is Leo's own action.
+- **Only `to-code` starts work, and agents never add it.** Otherwise the loop could trigger itself.
+- **Keywords count only when the owner writes them**, at the very start of a comment, in capitals, and after the latest agent reply. Agent comments start with a header, so they never read as keywords.
+- **A relayed approval** comes only from a chat Lead, quoting Leo's own words.
+- **Caps.** Autopilot: 20 agent replies, 3 plan revisions, 4 change requests. Classic: 4 turns. Leo can lift a classic cap with an owner `<!-- loop:v1 from=human type=reset turn=0 -->` comment.
+- **Stale claims are surfaced, not hidden:** after 90 minutes, or 180 for an approved build.
+- **The repo is public.** Only the owner's issues and comments count, and nothing confidential is ever committed.
+- **One issue per run, one reply per run.**
 
-## Loop guards (why each exists)
+## Token rules
 
-- **Only `to-code` triggers a run.** Triggering on "any comment" lets two Claudes answer each other forever.
-- **Turn cap of 4** (`loop_guard.py --max-turn`). Chat writes to GitHub as Leo's own account, so GitHub's built-in bot check cannot tell the two sides apart. The counter is the real brake.
-- **Leo can lift the cap** by commenting `<!-- loop:v1 from=human type=reset turn=0 -->` on the issue and re-applying `to-code`. Only the repo owner's reset counts, and the count restarts from there. Tell Leo this whenever you park a thread at the cap.
-- **The executor never applies `to-code`.** Otherwise it could re-trigger itself.
-- **Only the repo owner's issues and labels count.** On a public repo anyone can open an issue, and a run costs Leo's Pro quota.
-- **One run per label event, one reply per run.**
-- **Stale claims are surfaced, not hidden.** If a run crashes after claiming, the issue would sit on `code-working` forever. `triage.py` reports any claim older than 90 minutes and the next run parks it on `needs-leo`.
-- **A failed check is never "No new work."** `triage.py` exits 2 with an error, so a broken token or network cannot look like an empty queue.
-- **`loop_gh.py` cannot add `to-code`.** The labels it can add are only `code-working`, `to-chat`, `awaiting-approval`, `needs-leo` and `done`.
-- **Autopilot keywords count only from the owner,** at the very start of a comment, in capitals, and after the executor's latest reply. Executor comments start with the header, so the executor can never approve itself.
-- **Merging is scripted.** `loop_gh.py merge` merges only when the owner's `APPROVED` follows the latest plan, and only a clean, open, non-draft `claude/` PR, with the head SHA pinned. A `REVISE:` after approval or a newer plan withdraws the approval.
-- **Autopilot brakes:** 10 executor replies per issue, 3 plan revisions, and a 180-minute stale limit for builds. Phase 1 changes only the plan file (`check_plan.py`).
+These are the caveman rules, written inline because scheduled runs load no plugins.
+- Triage first. Read only the files the plan or the issue names, and never re-read the whole codebase.
+- From round 2 on, the review reads only `git diff <since>..<head>` and the open findings.
+- Hand-offs carry facts, paths, commands and results, with no filler. Keep code and errors verbatim.
+- Record each decision once, in the plan file or on the issue, and reuse it.
+- Batch the checks. Do not retry the same failing approach without new evidence.
+- Never drop a security check or a test to save tokens.
 
-## Token rules (Leo is on a limited Pro plan)
+## Skills used when installed, with fallbacks
 
-Cloud runs share the same 5-hour and weekly budget as chat. An idle hourly run is one `triage.py` call and one sentence. Keep issue bodies to file paths, not code. Read only named files. Batch small tasks into one issue. Keep replies to the 150-word format. Plan for at most 5 automated runs a day on Pro until the real cap is confirmed.
+| Need | Skill | Fallback |
+|---|---|---|
+| Project-level planning | web-app-project-planning | The plan sections in `references/lead.md` |
+| Build plan, TDD, debugging | superpowers writing-plans, test-driven-development, systematic-debugging | Failing test first; root cause before any fix |
+| Review | superpowers requesting-code-review, receiving-code-review | The review checklist in `references/lead.md` |
+| Proof of done | superpowers verification-before-completion | Run the command and read its output |
+| Token use | caveman | The token rules above |
 
-## When something fails
+Scheduled tasks start with no plugins (`enabled_plugins` is empty), so the fallbacks are the default there. Never claim that a skill was used unless it was loaded.
 
-If a step cannot finish, say which one in a comment, add `needs-leo`, and stop. For auth or connector failures name the exact setup step to redo (see `references/setup.md`). A run that "succeeded" only means the session ended, so always check the labels and the reply, not the run status.
+## Classic mode (chat ↔ Code)
+
+- **Planner (chat):** write the issue with the header `from=chat type=task turn=1` and the sections `## Goal`, `## Context` (paths, no pasted code), `## Acceptance criteria` and `## Constraints`. Create it with `to-code` if a GitHub write works; otherwise give Leo the text and tell him to add `to-code`. "Check the loop" means summarising the `to-chat` and `awaiting-approval` issues in two lines each.
+- **Code:** run `claim`, do the work on a `claude/` branch, open a PR, then send `reply` with `--add to-chat`, `needs-leo` or `done`, in 150 words or fewer.
+
+## Setup and failures
+
+The scripts and references ship in the skill folder. In a repo, that folder is `.claude/skills/github-loop/`, and the repo's copy is the source of truth. If the copy you loaded lacks a script or reference named here (for example, an account copy saved from SKILL.md only), clone the repo and use its copy.
+
+Setup steps are in `references/setup.md`: labels, issue form, the two scheduled tasks, CI, release policy and the readiness check. If a step cannot finish, park with the step and the evidence. A run that "succeeded" only means the session ended, so check the labels and replies, not the run status.

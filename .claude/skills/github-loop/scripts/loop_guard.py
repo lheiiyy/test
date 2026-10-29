@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Decide whether the Code-side executor may act on a GitHub issue.
+"""Decide whether a loop agent may act on a GitHub issue, and what the work is.
 
 Deterministic and offline. Reads an issue JSON file (REST shape, or the older
 `gh issue view --json` shape) plus its comments and prints one JSON object with
@@ -7,14 +7,20 @@ action = proceed | needs-leo | ignore.
 
 Two modes, picked from the issue body:
 - classic: a chat-written task with ## Goal and ## Acceptance criteria. Turn cap 4.
-- autopilot: the request has "Phase 1" and "Phase 2" headings (## or ###). The executor
-  writes a plan, waits for the owner's APPROVED comment, then builds, tests and merges.
-  A proceed result carries work_type = plan | revise | build | continue and phase = 1 | 2.
+- autopilot: the request has "Phase 1" and "Phase 2" headings (## or ###).
+  A proceed result carries work_type, phase and role:
+    lead (Cowork, Technical Lead): plan, revise, review, continue (phase 1)
+    code (Claude Code, Engineer):   build, fix, merge, continue (phase 2)
 
-Owner keywords (autopilot only): a comment by the repo owner that STARTS with
-`APPROVED`, `REVISE: <notes>` or `CONTINUE: <answer>`, in capitals, posted after the
-executor's latest reply. Executor replies are posted from the owner's account too, but
-they always start with a loop:v1 header, so they can never be read as a keyword.
+Who may say what (autopilot):
+- Leo, the repo owner, at the very start of a comment and in capitals:
+  `APPROVED`, `REVISE: <notes>`, `CONTINUE: <answer>`.
+- Agents post from the owner's account too, but every agent comment starts with a
+  loop:v1 header (`from=code` or `from=lead`), so it can never read as a keyword.
+- A `from=lead type=approval` comment relays Leo's approval given in a chat with the
+  Lead. It counts like `APPROVED`. Only a chat Lead may post it, quoting Leo.
+- Review verdicts are `from=lead type=verdict` comments naming the PR, the exact head
+  SHA and `verdict=approved|changes`.
 """
 import argparse
 import json
@@ -25,6 +31,9 @@ HEADER = re.compile(r"<!--\s*loop:v1\s+([^>]*?)-->")
 KEYWORD = re.compile(r"\A\s*(APPROVED\b|REVISE:|CONTINUE:)\s*(.*)\Z", re.DOTALL)
 PHASE1 = re.compile(r"^#{2,3}\s*Phase 1\b", re.MULTILINE)
 PHASE2 = re.compile(r"^#{2,3}\s*Phase 2\b", re.MULTILINE)
+AGENTS = {"code", "lead"}
+ROLE = {"plan": "lead", "revise": "lead", "review": "lead",
+        "build": "code", "fix": "code", "merge": "code"}
 
 
 def login(value):
@@ -43,6 +52,11 @@ def fields_of(raw):
 
 def headers(text):
     return [fields_of(m.group(1)) for m in HEADER.finditer(text or "")]
+
+
+def first_header(text):
+    m = HEADER.match((text or "").lstrip())
+    return fields_of(m.group(1)) if m else None
 
 
 def section(text, name):
@@ -86,24 +100,33 @@ def count_turns(msgs, owner):
     return max(turns) if turns else (0 if reset_seen else 1)  # a bare pasted issue counts as turn 1
 
 
-def executor_replies(msgs, owner):
-    """(index, header) for comments posted from the owner account whose first line is a from=code header."""
+def agent_replies(msgs, owner):
+    """(index, header) for owner-account comments whose first line is a from=code|lead header.
+    Relayed approvals are keywords, not replies, so they are left out."""
     found = []
     for i, m in enumerate(msgs):
         if m["is_body"] or not is_owner(m, owner):
             continue
-        first = HEADER.match(m["body"].lstrip())
-        if first and fields_of(first.group(1)).get("from") == "code":
-            found.append((i, fields_of(first.group(1))))
+        h = first_header(m["body"])
+        if h and h.get("from") in AGENTS and h.get("type") != "approval":
+            found.append((i, h))
     return found
 
 
+executor_replies = agent_replies  # older name, kept for callers
+
+
 def owner_keywords(msgs, owner, after):
-    """Owner keyword comments with index > after, oldest first."""
+    """Owner keyword comments (and relayed approvals) with index > after, oldest first."""
     found = []
     for i in range(after + 1, len(msgs)):
         m = msgs[i]
         if m["is_body"] or not is_owner(m, owner):
+            continue
+        h = first_header(m["body"])
+        if h:
+            if h.get("from") == "lead" and h.get("type") == "approval":
+                found.append({"keyword": "APPROVED", "text": "relayed from chat", "index": i, "relayed": True})
             continue
         k = KEYWORD.match(m["body"])
         if k:
@@ -111,10 +134,14 @@ def owner_keywords(msgs, owner, after):
     return found
 
 
+def latest_plan_index(replies):
+    return max((i for i, h in replies if h.get("type") == "plan"), default=None)
+
+
 def approval_status(issue, owner):
     """Is the latest plan approved? Used by loop_gh.py merge as an independent check."""
     msgs = thread(issue)
-    plan_idx = max((i for i, h in executor_replies(msgs, owner) if h.get("type") == "plan"), default=None)
+    plan_idx = latest_plan_index(agent_replies(msgs, owner))
     if plan_idx is None:
         return {"approved": False, "reason": "no plan reply on the issue"}
     kws = owner_keywords(msgs, owner, plan_idx)
@@ -125,12 +152,36 @@ def approval_status(issue, owner):
     return {"approved": True, "reason": "owner APPROVED the latest plan"}
 
 
+def review_history(msgs, owner):
+    """Code results and Lead verdicts after the latest plan, oldest first."""
+    replies = agent_replies(msgs, owner)
+    plan_idx = latest_plan_index(replies)
+    after = plan_idx if plan_idx is not None else -1
+    results = [(i, h) for i, h in replies
+               if i > after and h.get("from") == "code" and h.get("type") == "result" and h.get("phase") == "2"]
+    verdicts = [(i, h) for i, h in replies if i > after and h.get("from") == "lead" and h.get("type") == "verdict"]
+    return results, verdicts
+
+
+def review_status(issue, owner, head_sha):
+    """Is there an approved Lead verdict for exactly this head? Used by loop_gh.py merge."""
+    _, verdicts = review_history(thread(issue), owner)
+    if not verdicts:
+        return {"approved": False, "reason": "no Lead review verdict after the latest plan"}
+    v = verdicts[-1][1]
+    if v.get("verdict") != "approved":
+        return {"approved": False, "reason": "the latest Lead verdict requests changes"}
+    if v.get("head") != head_sha:
+        return {"approved": False, "reason": f"the approved verdict is for head {v.get('head')}, not {head_sha}"}
+    return {"approved": True, "reason": "Lead approved this exact head"}
+
+
 def decide_classic(issue, owner, max_turn, labeled_by=None):
     labels = label_names(issue.get("labels"))
     issue_author = login(issue.get("author") or issue.get("user"))
     msgs = thread(issue)
     current = count_turns(msgs, owner)
-    result = {"mode": "classic", "current_turn": current, "next_turn": current + 1}
+    result = {"mode": "classic", "role": "code", "current_turn": current, "next_turn": current + 1}
 
     def out(action, reason):
         result.update(action=action, reason=reason)
@@ -170,12 +221,12 @@ def decide_classic(issue, owner, max_turn, labeled_by=None):
     return out("proceed", "all guards passed")
 
 
-def decide_autopilot(issue, owner, labeled_by=None, max_replies=10, max_revisions=3):
+def decide_autopilot(issue, owner, labeled_by=None, max_replies=20, max_revisions=3, max_review_rounds=4):
     labels = label_names(issue.get("labels"))
     issue_author = login(issue.get("author") or issue.get("user"))
     msgs = thread(issue)
     current = count_turns(msgs, owner)
-    replies = executor_replies(msgs, owner)
+    replies = agent_replies(msgs, owner)
     reset_at = max((i for i, m in enumerate(msgs)
                     if is_owner(m, owner) and any(h.get("type") == "reset" for h in headers(m["body"]))), default=-1)
     live = [h for i, h in replies if i > reset_at]
@@ -183,23 +234,31 @@ def decide_autopilot(issue, owner, labeled_by=None, max_replies=10, max_revision
     last = replies[-1][1] if replies else None
     kws = owner_keywords(msgs, owner, replies[-1][0] if replies else 0)
     kw = kws[-1] if kws else None
+    results, verdicts = review_history(msgs, owner)
+    last_result = results[-1] if results else None
+    last_verdict = verdicts[-1] if verdicts else None
     result = {"mode": "autopilot", "current_turn": current, "next_turn": current + 1}
+    nt = current + 1
 
     def out(action, reason, **extra):
         result.update(action=action, reason=reason, **extra)
         return result
 
-    def work(kind, phase, notes=""):
+    def work(kind, phase, notes="", header=None, **extra):
+        role = ROLE.get(kind) or ("lead" if phase == 1 else "code")
         if len(live) >= max_replies:
-            return out("needs-leo", f"reply cap reached ({len(live)} of {max_replies} executor replies); "
-                       "a human should review this thread", phase=phase)
-        rtype = "plan" if phase == 1 else "summary"
-        return out("proceed", f"{kind} (phase {phase})", work_type=kind, phase=phase, notes=notes,
-                   reply_header=f"<!-- loop:v1 from=code type={rtype} phase={phase} turn={current + 1} -->")
+            return out("needs-leo", f"reply cap reached ({len(live)} of {max_replies} agent replies); "
+                       "a human should review this thread", phase=phase, role="code")
+        if header is None:
+            header = (f"<!-- loop:v1 from=lead type=plan phase=1 turn={nt} -->" if phase == 1 else
+                      f"<!-- loop:v1 from=code type=result phase=2 pr=<PR> head=<SHA> turn={nt} -->")
+        return out("proceed", f"{kind} (phase {phase})", work_type=kind, phase=phase, role=role, notes=notes,
+                   reply_header=header, **extra)
 
     def revise(notes):
         if len(plans) >= 1 + max_revisions:
-            return out("needs-leo", f"revision cap reached ({len(plans) - 1} of {max_revisions} revisions)", phase=1)
+            return out("needs-leo", f"revision cap reached ({len(plans) - 1} of {max_revisions} revisions)",
+                       phase=1, role="code")
         return work("revise", 1, notes)
 
     if issue_author.lower() != owner.lower():
@@ -207,21 +266,49 @@ def decide_autopilot(issue, owner, labeled_by=None, max_replies=10, max_revision
     if "done" in labels:
         return out("ignore", "issue is done")
     if "code-working" in labels:
-        return out("ignore", "already claimed by a running executor")
+        return out("ignore", "already claimed by a running agent")
     if "to-code" in labels:
         if labeled_by and labeled_by.lower() != owner.lower():
             return out("ignore", "label was not applied by the repo owner")
         if len(plans) >= 1 + max_revisions:
-            return out("needs-leo", f"revision cap reached ({len(plans) - 1} of {max_revisions} revisions)", phase=1)
+            return out("needs-leo", f"revision cap reached ({len(plans) - 1} of {max_revisions} revisions)",
+                       phase=1, role="code")
         return work("plan", 1)
     if "awaiting-approval" in labels:
         if not last or last.get("type") != "plan":
-            return out("ignore", "awaiting-approval, but the latest executor reply is not a plan")
+            return out("ignore", "awaiting-approval, but the latest agent reply is not a plan")
         if kw and kw["keyword"] == "APPROVED":
             return work("build", 2)
         if kw and kw["keyword"] == "REVISE":
             return revise(kw["text"])
         return out("ignore", "waiting for the owner's APPROVED or REVISE:")
+    if "to-review" in labels:
+        if not last_result:
+            return out("ignore", "to-review, but there is no Code result to review")
+        if last_verdict and last_verdict[0] > last_result[0]:
+            return out("ignore", "the latest Code result is already reviewed")
+        pr, head = last_result[1].get("pr"), last_result[1].get("head")
+        rnd = len(verdicts) + 1
+        return work("review", 2, header=f"<!-- loop:v1 from=lead type=verdict phase=2 pr={pr} head={head} "
+                                       f"verdict=<approved|changes> turn={nt} -->",
+                    pr=pr, head=head, review_round=rnd,
+                    since=(verdicts[-1][1].get("head") if verdicts else None))
+    if "reviewed" in labels:
+        if not last_verdict or (last_result and last_result[0] > last_verdict[0]):
+            return out("ignore", "waiting for a review of the latest head")
+        v = last_verdict[1]
+        pr, head = v.get("pr"), v.get("head")
+        if v.get("verdict") == "approved":
+            if last_result and last_result[1].get("head") != head:
+                return out("needs-leo", "the approved verdict names a different head than the latest Code result",
+                           phase=2, role="code")
+            return work("merge", 2, header=f"<!-- loop:v1 from=code type=summary phase=2 turn={nt} -->",
+                        pr=pr, head=head)
+        changes = sum(1 for _, h in verdicts if h.get("verdict") == "changes")
+        if changes >= max_review_rounds:
+            return out("needs-leo", f"review round cap reached ({changes} of {max_review_rounds} change requests)",
+                       phase=2, role="code")
+        return work("fix", 2, notes="fix every [BLOCKER] and [MAJOR] in the latest verdict comment", pr=pr, head=head)
     if "needs-leo" in labels:
         if kw and kw["keyword"] == "CONTINUE":
             raw = str((last or {}).get("phase", "1"))
@@ -232,9 +319,9 @@ def decide_autopilot(issue, owner, labeled_by=None, max_replies=10, max_revision
     return out("ignore", "no loop label")
 
 
-def decide(issue, owner, max_turn=4, labeled_by=None, max_replies=10, max_revisions=3):
+def decide(issue, owner, max_turn=4, labeled_by=None, max_replies=20, max_revisions=3, max_review_rounds=4):
     if is_autopilot(issue.get("body")):
-        return decide_autopilot(issue, owner, labeled_by, max_replies, max_revisions)
+        return decide_autopilot(issue, owner, labeled_by, max_replies, max_revisions, max_review_rounds)
     return decide_classic(issue, owner, max_turn, labeled_by)
 
 
@@ -244,8 +331,9 @@ def main():
     ap.add_argument("--owner", required=True, help="login of the repo owner")
     ap.add_argument("--comments", default=None, help="JSON array of issue comments (REST shape), if not inside the issue file")
     ap.add_argument("--max-turn", type=int, default=4, help="classic mode turn cap")
-    ap.add_argument("--max-replies", type=int, default=10, help="autopilot executor reply cap")
+    ap.add_argument("--max-replies", type=int, default=20, help="autopilot agent reply cap")
     ap.add_argument("--max-revisions", type=int, default=3, help="autopilot plan revision cap")
+    ap.add_argument("--max-review-rounds", type=int, default=4, help="autopilot change-request cap")
     ap.add_argument("--labeled-by", default=None, help="login of whoever applied the label, if known")
     args = ap.parse_args()
     with open(args.issue_json, encoding="utf-8") as f:
@@ -253,7 +341,8 @@ def main():
     if args.comments:
         with open(args.comments, encoding="utf-8") as f:
             issue["comments"] = json.load(f)
-    result = decide(issue, args.owner, args.max_turn, args.labeled_by, args.max_replies, args.max_revisions)
+    result = decide(issue, args.owner, args.max_turn, args.labeled_by, args.max_replies, args.max_revisions,
+                    args.max_review_rounds)
     json.dump(result, sys.stdout, indent=2)
     print()
 
