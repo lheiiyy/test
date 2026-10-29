@@ -13,25 +13,36 @@ Two modes, picked from the issue body:
     code (Claude Code, Engineer):   build, fix, merge, continue (phase 2)
 
 Who may say what (autopilot):
-- Leo, the repo owner, at the very start of a comment and in capitals:
-  `APPROVED`, `REVISE: <notes>`, `CONTINUE: <answer>`.
+- The owner (the repo owner's login; Leo in lheiiyy/test), at the very start of a comment and
+  in capitals: `APPROVED`, `REVISE: <notes>`, `CONTINUE: <answer>`.
 - Agents post from the owner's account too, but every agent comment starts with a
   loop:v1 header (`from=code` or `from=lead`), so it can never read as a keyword.
-- A `from=lead type=approval` comment relays Leo's approval given in a chat with the
-  Lead. It counts like `APPROVED`. Only a chat Lead may post it, quoting Leo.
+- A `from=lead type=approval` comment relays the owner's approval given in a chat with the
+  Lead. It counts like `APPROVED` only when it quotes the owner's own words and those words
+  start with `APPROVED` (`APPROVED by <name> in chat on <date>: "APPROVED ..."`).
+- Approval rules: the newest plan needs an owner `APPROVED` after it. A `REVISE:` after that
+  plan cancels any approval, before or after it, until the Lead posts a revised plan.
+  A `CONTINUE:` keeps the approval.
 - Review verdicts are `from=lead type=verdict` comments naming the PR, the exact head
   SHA and `verdict=approved|changes`.
 """
 import argparse
 import json
+import os
 import re
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from rules import declared_risk  # noqa: E402
 
 HEADER = re.compile(r"<!--\s*loop:v1\s+([^>]*?)-->")
 KEYWORD = re.compile(r"\A\s*(APPROVED\b|REVISE:|CONTINUE:)\s*(.*)\Z", re.DOTALL)
 PHASE1 = re.compile(r"^#{2,3}\s*Phase 1\b", re.MULTILINE)
 PHASE2 = re.compile(r"^#{2,3}\s*Phase 2\b", re.MULTILINE)
+RELAY = re.compile(r"(?m)^APPROVED by [^\n]{1,60}? in chat on \d{4}-\d{2}-\d{2}: [\u201c\"]APPROVED\b")
+CI_LINE = re.compile(r"(?im)^[ \t>*-]*CI required[ \t]*:[ \t]*\**[ \t]*(yes|no)\b")
 AGENTS = {"code", "lead"}
+OWNER_ASSOCIATIONS = {"OWNER"}  # config owner_associations can add "MEMBER" for an organization repo
 ROLE = {"plan": "lead", "revise": "lead", "review": "lead",
         "build": "code", "fix": "code", "merge": "code"}
 
@@ -73,7 +84,13 @@ def is_autopilot(body):
 def is_owner(message, owner):
     if login(message.get("user")).lower() != owner.lower():
         return False
-    return message.get("author_association") in (None, "", "OWNER")
+    return message.get("author_association") in (None, "") or message.get("author_association") in OWNER_ASSOCIATIONS
+
+
+def set_owner_associations(values):
+    """Which author_association values count as the owner (the login must match too)."""
+    OWNER_ASSOCIATIONS.clear()
+    OWNER_ASSOCIATIONS.update(values or ["OWNER"])
 
 
 def thread(issue):
@@ -126,7 +143,10 @@ def owner_keywords(msgs, owner, after):
         h = first_header(m["body"])
         if h:
             if h.get("from") == "lead" and h.get("type") == "approval":
-                found.append({"keyword": "APPROVED", "text": "relayed from chat", "index": i, "relayed": True})
+                quote = RELAY.search(m["body"])
+                if quote:  # a relay without the owner's own "APPROVED ..." words never counts
+                    found.append({"keyword": "APPROVED", "text": "relayed from chat", "index": i, "relayed": True,
+                                  "quote": relay_quote(m["body"])})
             continue
         k = KEYWORD.match(m["body"])
         if k:
@@ -134,22 +154,43 @@ def owner_keywords(msgs, owner, after):
     return found
 
 
+def relay_quote(body):
+    m = re.search(r"in chat on \d{4}-\d{2}-\d{2}: [\u201c\"](.*?)[\u201d\"]?\s*$", body or "", re.M)
+    return m.group(1).strip() if m else ""
+
+
 def latest_plan_index(replies):
     return max((i for i, h in replies if h.get("type") == "plan"), default=None)
 
 
 def approval_status(issue, owner):
-    """Is the latest plan approved? Used by loop_gh.py merge as an independent check."""
+    """Is the latest plan approved? Used by loop_gh.py merge and finish as an independent check.
+    A REVISE: after the latest plan cancels every approval until a revised plan is posted;
+    a CONTINUE: keeps it."""
     msgs = thread(issue)
     plan_idx = latest_plan_index(agent_replies(msgs, owner))
     if plan_idx is None:
         return {"approved": False, "reason": "no plan reply on the issue"}
     kws = owner_keywords(msgs, owner, plan_idx)
-    if not any(k["keyword"] == "APPROVED" for k in kws):
+    approvals = [k for k in kws if k["keyword"] == "APPROVED"]
+    if not approvals:
         return {"approved": False, "reason": "no owner APPROVED after the latest plan"}
-    if kws[-1]["keyword"] == "REVISE":
-        return {"approved": False, "reason": "the owner asked for a revision after approving"}
-    return {"approved": True, "reason": "owner APPROVED the latest plan"}
+    if any(k["keyword"] == "REVISE" for k in kws):
+        return {"approved": False, "reason": "the owner asked for a revision after the latest plan; the Lead must "
+                                             "post a revised plan before an APPROVED counts"}
+    last = approvals[-1]
+    relayed = bool(last.get("relayed"))
+    return {"approved": True, "reason": "owner APPROVED the latest plan" + (" (relayed from chat)" if relayed else ""),
+            "relayed": relayed, "quote": last.get("quote", "")}
+
+
+def plan_facts(issue, owner):
+    """What the latest plan reply declares: `Risk: low|normal|high` and `CI required: yes|no`."""
+    msgs = thread(issue)
+    idx = latest_plan_index(agent_replies(msgs, owner))
+    body = msgs[idx]["body"] if idx is not None else ""
+    ci = CI_LINE.search(body)
+    return {"risk": declared_risk(body), "ci_required": bool(ci and ci.group(1).lower() == "yes")}
 
 
 def review_history(msgs, owner):
@@ -163,9 +204,11 @@ def review_history(msgs, owner):
     return results, verdicts
 
 
-def review_status(issue, owner, head_sha):
-    """Is there an approved Lead verdict for exactly this head? Used by loop_gh.py merge."""
-    _, verdicts = review_history(thread(issue), owner)
+def review_status(issue, owner, head_sha, pr=None):
+    """Is there an approved Lead verdict for exactly this head (and this PR)? Used by loop_gh.py merge.
+    With `pr`, the verdict and the latest Code result must both name that PR, so a verdict for one PR
+    can never merge another."""
+    results, verdicts = review_history(thread(issue), owner)
     if not verdicts:
         return {"approved": False, "reason": "no Lead review verdict after the latest plan"}
     v = verdicts[-1][1]
@@ -173,6 +216,12 @@ def review_status(issue, owner, head_sha):
         return {"approved": False, "reason": "the latest Lead verdict requests changes"}
     if v.get("head") != head_sha:
         return {"approved": False, "reason": f"the approved verdict is for head {v.get('head')}, not {head_sha}"}
+    if pr is not None:
+        if v.get("pr") != str(pr):
+            return {"approved": False, "reason": f"the approved verdict names PR {v.get('pr')}, not {pr}"}
+        if not results or results[-1][1].get("pr") != str(pr):
+            return {"approved": False, "reason": f"the latest Code result does not name PR {pr}, so the PR is not "
+                                                 "linked to this issue"}
     return {"approved": True, "reason": "Lead approved this exact head"}
 
 
@@ -277,10 +326,11 @@ def decide_autopilot(issue, owner, labeled_by=None, max_replies=20, max_revision
     if "awaiting-approval" in labels:
         if not last or last.get("type") != "plan":
             return out("ignore", "awaiting-approval, but the latest agent reply is not a plan")
+        revises = [k for k in kws if k["keyword"] == "REVISE"]
+        if revises:  # a REVISE: after the plan wins over any APPROVED around it: a revised plan comes first
+            return revise(revises[-1]["text"])
         if kw and kw["keyword"] == "APPROVED":
             return work("build", 2)
-        if kw and kw["keyword"] == "REVISE":
-            return revise(kw["text"])
         return out("ignore", "waiting for the owner's APPROVED or REVISE:")
     if "to-review" in labels:
         if not last_result:

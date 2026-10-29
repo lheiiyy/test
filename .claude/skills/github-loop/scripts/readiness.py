@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """GitHub-side readiness matrix for the loop, from evidence, in one read-only call.
 
-    python scripts/readiness.py --repo lheiiyy/test --owner lheiiyy [--markdown] [--create-labels]
+    python scripts/readiness.py --repo <owner>/<repo> [--owner LOGIN] [--markdown] [--create-labels]
 
 Each row gets one status: READY, NEEDS SETUP, BLOCKED, NOT REQUIRED or UNVERIFIED, with
 the evidence, the impact, who acts, and which stage it blocks. Paste the --markdown table
@@ -16,8 +16,11 @@ Exit 0 always unless the repository itself cannot be read (exit 2).
 import argparse
 import json
 import os
-import subprocess
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import config as loop_config  # noqa: E402
+from ghapi import ApiError, call  # noqa: E402
 
 LABELS = {"to-code": "0E8A16", "code-working": "FBCA04", "awaiting-approval": "5319E7",
           "to-review": "1D76DB", "reviewed": "0052CC", "needs-leo": "D93F0B", "done": "6E7781"}
@@ -31,11 +34,12 @@ def get(path, fixtures, name):
             return False, "403 (fixture missing)"
         with open(full, encoding="utf-8") as f:
             return True, json.load(f)
-    proc = subprocess.run(["gh", "api", path], capture_output=True, text=True)
-    if proc.returncode != 0:
-        return False, (proc.stderr or proc.stdout).strip()[:160]
     try:
-        return True, json.loads(proc.stdout)
+        out = call([path])
+    except ApiError as e:
+        return False, str(e).split("failed: ", 1)[-1][:160]
+    try:
+        return True, json.loads(out)
     except json.JSONDecodeError:
         return False, "non-JSON reply"
 
@@ -60,10 +64,11 @@ def audit(repo, owner, fixtures=None, create_labels=False):
     missing = [l for l in LABELS if l not in have]
     if missing and create_labels and not fixtures:
         for name in list(missing):
-            proc = subprocess.run(["gh", "api", "-X", "POST", f"repos/{repo}/labels", "-f", f"name={name}",
-                                   "-f", f"color={LABELS[name]}"], capture_output=True, text=True)
-            if proc.returncode == 0:
+            try:
+                call(["-X", "POST", f"repos/{repo}/labels", "-f", f"name={name}", "-f", f"color={LABELS[name]}"])
                 missing.remove(name)
+            except ApiError:
+                pass  # stays NEEDS SETUP
     rows.append(row("Loop labels", "READY" if not missing else "NEEDS SETUP",
                     "all present" if not missing else "missing: " + ", ".join(missing),
                     "triage cannot route work without them", "Lead (--create-labels)", "implementation"))
@@ -72,7 +77,7 @@ def audit(repo, owner, fixtures=None, create_labels=False):
         ("github-loop skill on the default branch", f"repos/{repo}/contents/.claude/skills/github-loop/SKILL.md?ref={base}",
          "skill.json", "scheduled runs read the skill from the default branch"),
         ("Autopilot issue form", f"repos/{repo}/contents/.github/ISSUE_TEMPLATE/autopilot.yml?ref={base}",
-         "form.json", "Leo files requests without editing labels")]:
+         "form.json", "the owner files requests without editing labels")]:
         ok, _ = get(path, fixtures, name)
         rows.append(row(item, "READY" if ok else "NEEDS SETUP", "found" if ok else "not found", need, "Lead", "plan"))
 
@@ -94,7 +99,7 @@ def audit(repo, owner, fixtures=None, create_labels=False):
         rows.append(row("Rulesets", "READY", f"{len(rules)} ruleset(s)" + (f", {approvals} required approval(s)"
                                                                               if approvals else "")))
     else:
-        rows.append(row("Rulesets", "UNVERIFIED", f"cannot read: {rules}", "", "Leo checks Settings → Rules", "merge"))
+        rows.append(row("Rulesets", "UNVERIFIED", f"cannot read: {rules}", "", "the owner checks Settings → Rules", "merge"))
     ok, prot = get(f"repos/{repo}/branches/{base}/protection", fixtures, "protection.json")
     if ok:
         prr = (prot.get("required_pull_request_reviews") or {}).get("required_approving_review_count", 0)
@@ -104,7 +109,7 @@ def audit(repo, owner, fixtures=None, create_labels=False):
                         f"{', '.join(checks) or 'none'}"))
     else:
         rows.append(row(f"Branch protection on {base}", "UNVERIFIED", "the session token cannot read it (403)",
-                        "an unseen rule may still refuse a merge; the merge script reports it", "Leo checks Settings → "
+                        "an unseen rule may still refuse a merge; the merge script reports it", "the owner checks Settings → "
                         "Branches", "merge"))
     rows.append(row("Formal GitHub approval by the Lead",
                     "BLOCKED" if approvals else "NOT REQUIRED",
@@ -112,7 +117,7 @@ def audit(repo, owner, fixtures=None, create_labels=False):
                     + (f", and {approvals} approval(s) are required" if approvals else
                        "; no required approvals were found, so the Lead's verdict comment is the review record"),
                     "merges stop until a different account approves" if approvals else "",
-                    "Leo: remove the approval rule and require status checks instead, or add a second "
+                    "the owner: remove the approval rule and require status checks instead, or add a second "
                     "reviewer account" if approvals else "", "merge" if approvals else ""))
 
     ok, cfg = True, info
@@ -132,7 +137,7 @@ def audit(repo, owner, fixtures=None, create_labels=False):
         rows.append(row("Open pull requests", "READY", f"{len(prs)} open" + (f"; not from the loop: "
                         f"{', '.join(others)}" if others else ""), "check for overlapping files before building"))
     rows.append(row("GitHub Pages / hosting", "UNVERIFIED", "the session proxy blocks the Pages API",
-                    "deploys need hosting enabled once", "Leo (Settings → Pages) when the plan deploys", "deployment"))
+                    "deploys need hosting enabled once", "the owner (Settings → Pages) when the plan deploys", "deployment"))
     return rows, None
 
 
@@ -146,12 +151,19 @@ def markdown(rows):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--repo", required=True)
-    ap.add_argument("--owner", required=True)
+    ap.add_argument("--owner", default=None, help="the owner's login (default: config, then the repo's owner)")
+    ap.add_argument("--config", default=None)
     ap.add_argument("--markdown", action="store_true")
     ap.add_argument("--create-labels", action="store_true")
     ap.add_argument("--fixtures", default=None)
     a = ap.parse_args()
-    rows, err = audit(a.repo, a.owner, a.fixtures, a.create_labels)
+    try:
+        owner = loop_config.resolve_owner(a.repo, a.owner, loop_config.load(a.config), a.fixtures)
+    except (ApiError, ValueError) as e:
+        json.dump({"error": str(e)}, sys.stdout)
+        print()
+        sys.exit(2)
+    rows, err = audit(a.repo, owner, a.fixtures, a.create_labels)
     if err:
         json.dump({"error": err}, sys.stdout)
         print()

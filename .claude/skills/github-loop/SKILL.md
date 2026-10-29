@@ -1,153 +1,96 @@
 ---
 name: github-loop
-description: Coordinate Leo (Product Owner), Claude Cowork (Technical Lead) and Claude Code (Engineer) through GitHub Issues and pull requests, with no copy-paste relay. Autopilot mode runs plan with readiness check, one approval, build, independent review, fix, scripted merge, verify, deploy when authorized, and report. Use whenever Leo says "send to Code", "check the loop", "set up the loop", "autopilot", "plan then build" or "review the PR", or replies APPROVED, REVISE or CONTINUE on an issue. Also use it when an issue labeled to-code, awaiting-approval, to-review, reviewed or to-chat is in front of you, when a scheduled task fires for the loop, or when drafting an issue for Claude Code, even if "loop" is never said. It also picks the right model for each step (sonnet by default, opus only on risk) and applies Leo's Model override. It also reopens approvals closed by mistake, flags stalled runs, and can split work between a Sonnet and an Opus Lead.
+description: Coordinate the repo owner (Product Owner; Leo in lheiiyy/test), a Lead (Claude Cowork or a chat session, Technical Lead) and Claude Code (Engineer) through GitHub Issues and pull requests, with no copy-paste relay. Autopilot mode runs plan with readiness check, one approval, build, independent review, fix, scripted merge, verify, deploy when authorized, and report. Use whenever the owner says "send to Code", "check the loop", "set up the loop", "autopilot", "plan then build" or "review the PR", or replies APPROVED, REVISE or CONTINUE on an issue. Also use it when an issue labeled to-code, awaiting-approval, to-review, reviewed or to-chat is in front of you, when a scheduled task fires for the loop, or when drafting an issue for Claude Code, even if "loop" is never said. It routes each step to the right experts and model (sonnet by default, opus only on risk), keeps high-risk merges with the owner, reopens approvals closed by mistake, flags stalled runs, and works in any repository or account.
 ---
 
 # github-loop
 
-GitHub is the shared source of truth. Issues carry requests and hand-offs, pull requests carry code, and labels say whose turn it is. Every agent posts from Leo's account, so the first line of each agent comment is a header that names the writer.
+GitHub is the shared source of truth. Issues carry requests and hand-offs, pull requests carry code, and labels say whose turn it is. Every agent posts from the owner's account, so the first line of each agent comment is a header that names the writer. Settings per repository (owner, owner's name, language, base branch) live in `.github/github-loop.json`; without it the repo's owner is used (`scripts/config.py`).
 
 ## Team and authority
 
 | Who | Owns | Acts through |
 |---|---|---|
-| **Leo**, Product Owner | Goals, requirements, the one plan approval, scope changes, material risks, production releases (release policy) | The request (issue form), then `APPROVED`, `REVISE: <notes>` or `CONTINUE: <answer>` comments |
-| **Lead**, Claude Cowork (Technical Lead) | Inspection, readiness audit, the plan, independent review, verification, escalation | A chat with Leo, or the hourly Lead scheduled task (`--role lead`). Steps: `references/lead.md` |
-| **Code**, Claude Code (Engineer) | Branches, code, tests, PRs, fixes, the scripted merge, post-merge checks, authorized deploys, the report | The hourly Code scheduled task (`--role code`). Steps: `references/autopilot.md` |
-| **GitHub** | The record: issues, PRs, commits, checks, verdicts | The `gh api` REST calls in `scripts/` |
+| **Owner** (Product Owner) | Goals, the one plan approval, scope changes, material risks, high-risk merges, production releases | The request (issue form), then `APPROVED`, `REVISE: <notes>` or `CONTINUE: <answer>` comments |
+| **Lead** (Technical Lead) | Inspection, readiness, the plan, independent review, escalation | A chat with the owner, or the hourly Lead task (`--role lead`). Steps: `references/lead.md` |
+| **Code** (Engineer) | Branches, code, tests, PRs, fixes, the scripted merge, verify, authorized deploys, the report | The hourly Code task (`--role code`). Steps: `references/autopilot.md` |
 
-**Decide your role first:**
-- In a chat with Leo → you are the Lead.
-- In a scheduled run → the role is the one in the task prompt.
-- Asked to set up the loop → read `references/setup.md` and walk Leo through it one step at a time. Every step must work from a tablet browser.
+**Your role:** in a chat with the owner you are the Lead; in a scheduled run, the role in the task prompt; asked to set up the loop, follow `references/setup.md` one step at a time (every step works from a tablet browser).
 
-- Approving the plan authorizes the routine work in its scope, including the merge.
-- It never overrides platform permissions, repository rules or security controls.
-- Self-review is not review: the Lead reviews from a different session than the one that built.
-- In this loop, plan approval replaces the "Leo approves merge" gate in the Ship row of web-app-project-planning. Production deploys still follow the plan's release policy.
+- Approving the plan authorizes the routine work in its scope, including a merge of normal or low risk.
+- High-risk work (rules in `scripts/rules.py`: auth and permissions, secrets, schema and migrations, deploys, `.github/`, the skill itself, or `Risk: high` in the plan) is merged by the owner: a Merge tap, or the owner's own `MERGE ...` words in a chat session.
+- Nothing overrides platform permissions, repository rules or security controls. Self-review is not review.
 
 ## Lifecycle (autopilot mode)
 
-INSPECT → PLAN + READINESS (Lead) → APPROVE ONCE (Leo) → IMPLEMENT + TEST (Code) → REVIEW (Lead) → FIX (Code) → MERGE through the scripted gate (Code) → VERIFY (Code) → DEPLOY WHEN AUTHORIZED (Code) → REPORT (Code; the issue closes).
+INSPECT → PLAN + READINESS (Lead) → APPROVE ONCE (owner) → BUILD + TEST (Code) → REVIEW (Lead) → FIX (Code) → MERGE through the scripted gate (Code; the owner for high risk) → VERIFY → DEPLOY WHEN AUTHORIZED → REPORT (Code; the issue closes).
 
-An issue is in autopilot mode when its body has Phase 1 and Phase 2 headings (`references/task-template.md`, or the Autopilot issue form). Any other issue is in **classic mode**: chat writes a task with Goal and Acceptance criteria, Code replies, and the turn cap is 4 (see the end of this file).
+An issue is in autopilot mode when its body has Phase 1 and Phase 2 headings (`references/task-template.md` or the Autopilot issue form). Any other issue is classic mode (`references/classic.md`).
 
-**What Leo does per feature:** files the request, and approves the plan (`APPROVED` on the issue, or in a chat with the Lead). If a platform rule refuses the merge, he also taps Merge once and replies `CONTINUE: merged`. Releases follow the release policy.
-
-**Tap Comment, not "Close with comment".** The second button closes the issue together with the keyword, and the loop scans open issues. Triage notices such an issue (`reopen`) and the next run reopens it, but only within 48 hours and not if it was closed as "not planned".
+The owner files the request and approves the plan (`APPROVED` on the issue, or in a chat with the Lead). **Tap Comment, not "Close with comment"**: closing hides the issue; triage reopens it within 48 hours unless it was closed as "not planned".
 
 ## Labels: whose turn it is
 
 | Label | Next actor |
 |---|---|
-| `to-code` | Lead plans (autopilot); Code works (classic). The only label that starts work, and Leo or the issue form adds it. |
-| `awaiting-approval` | Leo: `APPROVED` or `REVISE: <notes>` |
+| `to-code` | Lead plans (autopilot); Code works (classic). The only label that starts work; only the owner or the issue form adds it. |
+| `awaiting-approval` | Owner: `APPROVED` or `REVISE: <notes>` |
 | `code-working` | A run of either role holds the claim |
-| `to-review` | Lead reviews the exact head that Code named |
+| `to-review` | Lead reviews the exact head Code named |
 | `reviewed` | Code merges (verdict approved) or fixes (changes requested) |
-| `needs-leo` | Leo: `CONTINUE: <answer>` or `REVISE: <notes>`. Classic mode stops here. |
+| `needs-leo` | Owner: `CONTINUE: <answer>` or `REVISE: <notes>` (the label keeps its name in every repo) |
 | `to-chat` | Classic only: the chat planner |
 | `done` | Finished and closed |
 
 ## Message headers
 
-The first line of every agent comment:
-
-```
-<!-- loop:v1 from=code|lead|chat type=TYPE [phase=1|2] [pr=N head=SHA] [verdict=approved|changes] turn=N -->
-```
+First line of every agent comment: `<!-- loop:v1 from=code|lead|chat type=TYPE [phase=1|2] [pr=N head=SHA] [verdict=approved|changes] turn=N -->`
 
 | Type | From | Rule |
 |---|---|---|
-| `plan` | lead | phase=1 |
+| `plan` | lead | phase=1. Carries `Risk: low\|normal\|high` and `CI required: yes\|no` lines (the merge gate reads them). |
 | `result` | code | phase=2 adds `pr` and the exact `head` |
 | `verdict` | lead | Names `pr`, `head` and `verdict`. Ends with `Reviewed head <sha>`, then `VERDICT: APPROVED` or `VERDICT: CHANGES REQUESTED`. |
-| `summary` | code | phase=2. Carries five report lines: Implemented and tested / Reviewed / Merged / Deployed / Blocked or unverified. |
-| `question` | either | Used by `park` |
-| `approval` | lead | Relays Leo's approval from a chat, quoting him. Never posted from a scheduled run. |
+| `summary` | code | phase=2. Five lines: Implemented and tested / Reviewed / Merged / Deployed / Blocked or unverified. |
+| `question` | either | Posted by `park` |
+| `approval` | lead | Relays the owner's chat approval: `APPROVED by <name> in chat on <date>: "APPROVED ..."`. Chat only. |
 | `task`, `result`, `status` | chat, code | Classic mode |
 
-A plan, a phase 2 result, a verdict and a summary also carry one `Model: <tier>` line (see Model routing). The script refuses the reply without it.
+A plan, phase 2 result, verdict and summary also carry one `Model: <tier>` line. The scripts refuse a reply that breaks a rule.
 
 ## Every run, both roles
 
-Run the scripts from the skill folder (`.claude/skills/github-loop/` in a repo) after `export PYTHONDONTWRITEBYTECODE=1`. Use REST (`gh api`) only, because GraphQL and `gh pr create` fail in cloud sessions.
-- Open a PR: `gh api -X POST repos/<o>/<r>/pulls -f title=... -f head=claude/... -f base=main -F body=@pr.md`. Never open a draft, because REST cannot mark it ready.
-- Add `--dry-run` to any `loop_gh.py` command to see its calls without sending them.
-- Never report a hand-off that did not succeed.
+Run the scripts from the skill folder (`.claude/skills/github-loop/` in a repo) after `export PYTHONDONTWRITEBYTECODE=1`. Use REST (`gh api`) only: GraphQL and `gh pr create` fail in cloud sessions. Open a PR with `gh api -X POST repos/<o>/<r>/pulls -f title=... -f head=claude/... -f base=main -F body=@pr.md`, never as a draft. Add `--dry-run` to any `loop_gh.py` command to see its calls; add `--session <this task's model>` to posting commands so the Model line is checked. Every posting command is safe to repeat.
 
-1. **Triage:** `python scripts/triage.py --repo <o>/<r> --owner <owner> --role <code|lead>` (the task prompt may add `--max-tier` or `--min-tier`, see Model routing).
-   - A summary that starts with `No new work.` → say exactly that and stop. (It may end with "(N deferred to a stronger task)"; that is not work for you.)
+1. **Triage:** `python scripts/triage.py --repo <o>/<r> --role <code|lead>` (`--owner` only if the config does not name it; the task prompt may add `--max-tier` or `--min-tier`, see `references/models.md`).
+   - A summary starting `No new work.` → say exactly that and stop.
    - Exit code 2 or `TRIAGE FAILED` → report the error and stop. A failure is never "No new work."
-2. **Reopen (either role).** For each `reopen` entry, run `python scripts/loop_gh.py reopen --repo <o>/<r> --issue <N>`, then run triage again and use the new result. Leo closed the issue with "Close with comment"; reopening posts nothing and changes no label.
-3. **Park.**
-   - *Code role only:* for each `needs_leo` and `stale` entry, run `python scripts/loop_gh.py park --repo <o>/<r> --issue <N> --turn <next_turn> --reason "<reason>"`. Add `--phase <phase>` only for autopilot entries (`mode: autopilot`). For a stale entry, the reason is "the previous run stopped after claiming; reply CONTINUE: to retry (re-apply to-code in classic mode)".
-   - *Either role:* for each `stalled` entry (the other role's work that nobody picked up), run `park --from <your role> --phase <phase> --turn <next_turn> --reason "No <for_role> run picked up the <work_type> for <waiting_minutes> min; check the <for_role> scheduled task, then reply CONTINUE:"`. Never post a status comment instead: only `park` keeps the thread machine-readable.
-4. **One issue per run.** Take the first `work` entry. Lead work follows `references/lead.md`, Code work follows `references/autopilot.md`, and classic work follows "Classic mode" below.
-5. **Verify the hand-off.** After the post command succeeds, run triage once more: the issue must no longer be in your `work` list (it is now waiting or the other role's). If it still is, the post did not take: check the labels once, retry once, then park with what you saw. This costs one cheap call and catches silent failures.
+2. **Reopen** each `reopen` entry with `python scripts/loop_gh.py reopen --repo <o>/<r> --issue <N>`, then run triage again.
+3. **Park.** Code parks each `needs_leo` and `stale` entry: `python scripts/loop_gh.py park --repo <o>/<r> --issue <N> --turn <next_turn> --reason "<reason>"` (add `--phase <phase>` for autopilot entries). Either role parks each `stalled` entry: `park --from <your role> --phase <phase> --turn <next_turn> --reason "No <for_role> run picked up the <work_type> for <waiting_minutes> min; check the <for_role> scheduled task, then reply CONTINUE:"`. Never post a status comment instead.
+4. **One issue per run.** Take the first `work` entry. Lead work: `references/lead.md`. Code work: `references/autopilot.md`. Classic: `references/classic.md`.
+5. **Route the step** (plan, revise, build, fix and review): `python3 scripts/route.py --step <step> [--paths ... | --git-range ...] --text <issue body file> --session <model>`. Read only the expert notes it lists; its `model` part is the `scripts/pick_model.py` answer (tier, `run inline` or `delegate`, the true `model_line`). Merge, verify and the report are scripted steps with no routing (`pick_model.py --step merge|verify|report` gives their Model line).
+6. **Verify the hand-off.** After a post succeeds, run triage once more: the issue must have left your `work` list. If not, check the labels once, retry once, then park with what you saw.
 
 ## The merge gate (`loop_gh.py merge`)
 
-The script merges only when all of these hold:
-- The owner approved the latest plan.
-- The latest Lead verdict approves the PR's exact head.
-- No check run or commit status on that head is failing or pending. When the plan requires CI, at least one check must exist.
-- The PR is open, not a draft, on a `claude/` branch, against `main`, and cleanly mergeable.
-
-The head SHA is pinned. Anything else returns an exit code, and the run parks with that reason. Never work around a refusal, whether it comes from the script, GitHub or the platform.
+Merges only when: the owner approved the latest plan and no `REVISE:` came after it; the latest Lead verdict approves the PR's exact head and names this PR, as does the latest Code result; no check is failing or pending, and one exists when the plan says `CI required: yes`; the PR is open, not a draft, from this repository, on a `claude/` branch, against the base, cleanly mergeable, with its whole file list read; and the change is not high risk. The head SHA is pinned. Exit codes: 4 not approved, 5 not mergeable, 6 checks, 8 high risk (the owner merges). Park with the reason; never work around a refusal, whether it comes from the script, GitHub or the platform.
 
 ## Guards (why each exists)
 
-- **Only `to-code` starts work, and agents never add it.** Otherwise the loop could trigger itself.
-- **Keywords count only when the owner writes them**, at the very start of a comment, in capitals, and after the latest agent reply. Agent comments start with a header, so they never read as keywords.
-- **A relayed approval** comes only from a chat Lead, quoting Leo's own words.
-- **Caps.** Autopilot: 20 agent replies, 3 plan revisions, 4 change requests. Classic: 4 turns. Leo can lift a classic cap with an owner `<!-- loop:v1 from=human type=reset turn=0 -->` comment.
-- **Stale claims are surfaced, not hidden:** after 90 minutes, or 180 for an approved build.
-- **Silent runs are surfaced too.** Each role watches the other's pending work and parks it after 180 minutes (`stalled`), so Leo sees a `needs-leo` issue instead of a quiet queue. A role never parks its own work and `--role all` never stalls.
-- **A closed approval is reopened,** within 48 hours, unless the issue is `done` or was closed as "not planned".
-- **The repo is public.** Only the owner's issues and comments count, and nothing confidential is ever committed.
-- **One issue per run, one reply per run.**
+- **Only `to-code` starts work, and agents never add it**, so the loop cannot trigger itself.
+- **Keywords count only from the owner**, at the very start of a comment, in capitals, after the latest agent reply. `REVISE:` cancels an approval until a revised plan is posted; `CONTINUE:` keeps it. Agent comments start with a header, so they never read as keywords.
+- **A relayed approval** comes only from a chat Lead and quotes the owner's words, which must start with `APPROVED`; the final summary repeats the quote.
+- **Caps:** 20 agent replies, 3 plan revisions, 4 change requests (autopilot); 4 turns (classic). Stale claims surface after 90 minutes (180 for a build); each role parks the other's work untouched for 180 minutes (`stalled`).
+- **`finish` needs a merged PR** (or `No PR: yes` in the issue), so an open PR is never reported as done.
+- **The repo may be public:** only the owner's issues and comments count, and nothing confidential is committed.
+- **One issue per run, one reply per run.** Lists are read to the last page; rate limits and server errors are retried, then reported as a failure.
 
 ## Token rules
 
-These are the caveman rules, written inline because scheduled runs load no plugins.
-- Triage first. Read only the files the plan or the issue names, and never re-read the whole codebase.
-- From round 2 on, the review reads only `git diff <since>..<head>` and the open findings.
-- Hand-offs carry facts, paths, commands and results, with no filler. Keep code and errors verbatim.
-- Record each decision once, in the plan file or on the issue, and reuse it.
-- Batch the checks. Do not retry the same failing approach without new evidence.
-- Never drop a security check or a test to save tokens.
+Scheduled runs load no plugins, so these are inline. Triage first and stop when idle. Read only the files the plan, the issue and the routed expert notes name; never re-read the whole codebase. From review round 2, read only `git diff <since>..<head>` and the open findings. Hand-offs carry facts, paths, commands and results, with code and errors verbatim. Record each decision once and reuse it. Never drop a security check or a test to save tokens.
 
-## Model routing
+**Skills, when installed:** web-app-project-planning for a new project, and the superpowers skills for TDD, debugging, review and verification. Scheduled runs load none, so the fallbacks are the default: the plan sections and review checklist in `references/lead.md`, a failing test first, the root cause before any fix, and the command's real output as proof. Never claim a skill was used unless it was loaded.
 
-Use the cheapest model that does the step reliably, and move up on risk, not on effort. Before each step run `python3 scripts/pick_model.py --step <plan|revise|build|fix|review|merge|verify|report> --session <this task's model> ...` (flags and the subagent brief are in `references/models.md`). It answers with a tier and `run inline` or `delegate`.
-- Merge and verify are scripted (haiku). Plan, revise and review start at sonnet and never go lower. Build and fix are sonnet.
-- Opus is for sensitive files (auth, permissions, schema, secrets, deploy, workflows), big changes, an architecture-heavy goal, the third review round, the second plan revision, and the second attempt at a failing fix. A fix escalates once, then parks.
-- `delegate` means hand the judgment to a subagent with that model, and keep the scripts, the checks and the posting in this session. A tier below the task's own runs inline.
-- Leo's `Model: opus|sonnet|haiku` line (or the Model field of the issue form) beats the script. The top tier, fable, only on his word.
-- **The Model line is mandatory and exact.** A plan, phase 2 result, verdict and summary carry one line `Model: <haiku|sonnet|opus>`, the model that actually produced the reply. `pick_model.py` prints the true line for each case (`model_line`: `inline` or `subagent`). If the step wanted a higher tier and you ran inline, the line says so: `Model: sonnet (wanted opus; ran inline, no subagent)`. `check_reply.py` rejects a missing, doubled or vague line.
-- **Evidence from the live run:** a scheduled run showed no subagent use, so treat `delegate` as "no subagent" unless a run proves otherwise. For sensitive work, the option that works is a second task on Opus (`references/models.md`, "Two Lead tasks"), or a chat on Opus.
-- Every autopilot `work` entry from triage carries `tier` and `tier_reason` (a quick estimate from the request and the PR's file list). The step still runs `pick_model.py` with the real diff, and that answer wins. A task started with `--max-tier sonnet` leaves opus-tier work in `deferred` for 120 minutes, then takes it with a `tier_note` that must show in its Model line.
+## Setup, other repositories and failures
 
-## Skills used when installed, with fallbacks
-
-| Need | Skill | Fallback |
-|---|---|---|
-| Project-level planning | web-app-project-planning | The plan sections in `references/lead.md` |
-| Build plan, TDD, debugging | superpowers writing-plans, test-driven-development, systematic-debugging | Failing test first; root cause before any fix |
-| Review | superpowers requesting-code-review, receiving-code-review | The review checklist in `references/lead.md` |
-| Proof of done | superpowers verification-before-completion | Run the command and read its output |
-| Token use | caveman | The token rules above |
-
-Scheduled tasks start with no plugins (`enabled_plugins` is empty), so the fallbacks are the default there. Never claim that a skill was used unless it was loaded.
-
-## Classic mode (chat ↔ Code)
-
-- **Planner (chat):** write the issue with the header `from=chat type=task turn=1` and the sections `## Goal`, `## Context` (paths, no pasted code), `## Acceptance criteria` and `## Constraints`. Create it with `to-code` if a GitHub write works; otherwise give Leo the text and tell him to add `to-code`. "Check the loop" means summarising the `to-chat` and `awaiting-approval` issues in two lines each.
-- **Code:** run `claim`, do the work on a `claude/` branch, open a PR, then send `reply` with `--add to-chat`, `needs-leo` or `done`, in 150 words or fewer.
-
-## Setup and failures
-
-The scripts and references ship in the skill folder. In a repo, that folder is `.claude/skills/github-loop/`, and the repo's copy is the source of truth. If the copy you loaded lacks a script or reference named here (for example, an account copy saved from SKILL.md only), clone the repo and use its copy.
-
-Setup steps are in `references/setup.md`: labels, issue form, the two scheduled tasks and their models, CI, release policy and the readiness check. If a step cannot finish, park with the step and the evidence. A run that "succeeded" only means the session ended, so check the labels and replies, not the run status.
+The repository's copy of this folder is the source of truth. A copy that lacks a script or reference named here (for example an account copy saved from SKILL.md only) is out of date: clone the repo and use its copy, or install the packaged zip (`scripts/package.py`). Setup for any repository or account: `references/setup.md`. Recovery steps: `references/runbook.md`. A run that "succeeded" only means the session ended, so judge by labels and replies.

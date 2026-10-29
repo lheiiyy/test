@@ -14,6 +14,8 @@ Checks:
   checks and the responsible agent; the merge plan names the branch, the method and
   the release policy (deploy or no deploy); the readiness section uses the statuses
   READY, NEEDS SETUP, BLOCKED, NOT REQUIRED or UNVERIFIED;
+- the merge plan declares `Risk: low|normal|high` and `CI required: yes|no` on their own lines
+  (the plan reply repeats them, and the merge gate reads them: high risk means the owner merges);
 - the last non-empty line is exactly AWAITING APPROVAL;
 - with --git-base or --changed: the plan is the only changed file, because
   Phase 1 makes no code changes.
@@ -38,6 +40,8 @@ TOPICS = {
     "Readiness": ["ready|needs setup|blocked|not required|unverified"],
 }
 TIERS = re.compile(r"\b(haiku|sonnet|opus)\b", re.IGNORECASE)
+RISK_LINE = re.compile(r"(?im)^[ \t>*-]*risk[ \t]*:[ \t]*\**[ \t]*(low|normal|high)\b")
+CI_LINE = re.compile(r"(?im)^[ \t>*-]*CI required[ \t]*:[ \t]*\**[ \t]*(yes|no)\b")
 HEADING = re.compile(r"^(#{2,3})\s+(.+?)\s*$", re.MULTILINE)
 
 
@@ -66,8 +70,12 @@ def changed_files_from_git(base):
             raise RuntimeError(f"git {' '.join(args)} failed: {proc.stderr.strip()[:200]}")
         return proc.stdout
     top = git("rev-parse", "--show-toplevel").strip()
-    names = set(git("diff", "--name-only", base).split()) | set(git("ls-files", "--others", "--exclude-standard",
-                                                                      "--full-name", top).split())
+    # Compare with the point where the branch left the base, so new commits on the base never count as changes
+    # of this branch (the working tree is compared, so uncommitted edits count too).
+    fork_point = git("merge-base", base, "HEAD").strip()
+    changed = git("diff", "--name-only", fork_point).split()
+    untracked = git("ls-files", "--others", "--exclude-standard", "--full-name", top).split()
+    names = set(changed) | set(untracked)
     return top, sorted(names)
 
 
@@ -84,6 +92,11 @@ def check(text, plan_rel=None, changed=None):
             for topic in TOPICS[name]:
                 if not any(word in low for word in topic.split("|")):
                     problems.append(f"{name} does not cover: {topic.split('|')[0]}")
+            if name == "Merge plan":
+                if not RISK_LINE.search(body[name]):
+                    problems.append("Merge plan needs a line `Risk: low|normal|high` (high: the owner merges)")
+                if not CI_LINE.search(body[name]):
+                    problems.append("Merge plan needs a line `CI required: yes|no`")
             if name == "Task breakdown" and not TIERS.search(body[name]):
                 problems.append("Task breakdown has no model plan: name a tier (haiku, sonnet or opus) per step, "
                                 "from scripts/pick_model.py")

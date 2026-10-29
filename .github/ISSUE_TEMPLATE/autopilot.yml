@@ -6,10 +6,11 @@ body:
   - type: markdown
     attributes:
       value: |
-        Fill the first eight fields; the rest are Leo's standard rules and can stay as they are.
+        Fill the first eight fields; the rest are the owner's standard rules and can stay as they are.
         The Lead posts a plan and readiness matrix within about an hour. Then comment `APPROVED` (capitals) to build and merge,
         `REVISE: <notes>` to change the plan, or `CONTINUE: <answer>` to answer a question.
         Tap **Comment**, not "Close with comment": closing hides the issue from the loop.
+        High-risk work (login, permissions, schema, deploys, workflows, the loop's own skill) waits for your Merge tap at the end.
   - type: input
     id: objective
     attributes:
@@ -99,7 +100,7 @@ body:
         2. Architecture: components, data flow, schema changes, integration points, migration path, key decisions with one-line reasons.
         3. Task breakdown: ordered tasks, each with the responsible agent, the files touched and a pass/fail check.
         4. Test plan: what gets tested, with which tooling, and what "tests pass" means.
-        5. Merge plan: branch name, merge method, the conditions for merging, and the release policy.
+        5. Merge plan: branch name, merge method, the conditions for merging, the release policy, and two lines of their own: `Risk: low|normal|high` and `CI required: yes|no`.
         6. Readiness: READY / NEEDS SETUP / BLOCKED / NOT REQUIRED / UNVERIFIED for every dependency, and one checklist of what I must do by hand.
         End the file with the line "AWAITING APPROVAL". Make no code changes in Phase 1.
     validations:
