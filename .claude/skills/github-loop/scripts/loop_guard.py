@@ -259,7 +259,7 @@ def decide_autopilot(issue, owner, labeled_by=None, max_replies=20, max_revision
         if len(plans) >= 1 + max_revisions:
             return out("needs-leo", f"revision cap reached ({len(plans) - 1} of {max_revisions} revisions)",
                        phase=1, role="code")
-        return work("revise", 1, notes)
+        return work("revise", 1, notes, round=len(plans))
 
     if issue_author.lower() != owner.lower():
         return out("ignore", "issue author is not the repo owner")
@@ -308,7 +308,8 @@ def decide_autopilot(issue, owner, labeled_by=None, max_replies=20, max_revision
         if changes >= max_review_rounds:
             return out("needs-leo", f"review round cap reached ({changes} of {max_review_rounds} change requests)",
                        phase=2, role="code")
-        return work("fix", 2, notes="fix every [BLOCKER] and [MAJOR] in the latest verdict comment", pr=pr, head=head)
+        return work("fix", 2, notes="fix every [BLOCKER] and [MAJOR] in the latest verdict comment", pr=pr, head=head,
+                    round=changes)
     if "needs-leo" in labels:
         if kw and kw["keyword"] == "CONTINUE":
             raw = str((last or {}).get("phase", "1"))

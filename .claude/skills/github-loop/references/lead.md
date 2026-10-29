@@ -4,6 +4,7 @@ Read this when triage gives `role: lead` work (`plan`, `revise`, `review`, or `c
 
 ## Every run
 
+0. **Housekeeping first (SKILL.md, "Every run", steps 2 and 3).** Reopen each `reopen` entry, then run triage again. Park each `stalled` entry with `--from lead` (it is Code's work that nobody picked up). If that was all there was and `work` is empty, say what you did in one line and stop.
 1. **Repo identity gate.** The request's repo and project folder must match the repo you are in. If they do not, run `python scripts/loop_gh.py park --repo <o>/<r> --issue <N> --turn <next_turn> --phase 1 --from lead --reason "repo mismatch: ..."` and stop before any change.
 2. **Claim:** `python scripts/loop_gh.py claim --repo <o>/<r> --issue <N>`. Exit code 3 → stop.
 3. **Read only what is needed:** the issue, the project's `CLAUDE.md`, the docs the request names, and for a review, the plan file. Never read the whole codebase.
@@ -12,7 +13,7 @@ Read this when triage gives `role: lead` work (`plan`, `revise`, `review`, or `c
 
 For a new project or system, plan with **web-app-project-planning**: in chat, its Docs artifact; in a scheduled run, its section list inside the repo plan file. For a feature, write `<project folder>/docs/plan-<slug>.md` on branch `claude/<slug>`, where the slug is the request's feature name.
 
-**Pick the model first.** Save the issue body to a file and run `python3 scripts/pick_model.py --step plan --text <file> --session <this task's model>` (`--step revise --round <n>` for a revision). On `delegate`, a subagent with that model drafts the plan file, following the sections below; you then run the checks and the posting yourself (`references/models.md`). Otherwise plan inline.
+**Pick the model first.** Save the issue body to a file and run `python3 scripts/pick_model.py --step plan --text <file> --session <this task's model>` (`--step revise --round <n>` for a revision; the entry's `round` is the number). On `delegate`, a subagent with that model drafts the plan file, following the sections below; you then run the checks and the posting yourself (`references/models.md`). Otherwise plan inline. Keep the `model_line` it prints (the `inline` or `subagent` one, whichever is true) for the reply. If the entry has a `tier_note`, the work waited for a stronger task that never came: do it at your own tier and use the `inline` line, which says what was wanted.
 
 1. **Inspect** the repo state, open PRs that touch the same files, existing docs, tests and CI. Reuse what works. Name the project's existing status document (its equivalent of PROJECT_STATUS.md, for example `specs/plan.md` or `docs/STATUS.md`) in the plan, so Code updates it instead of creating a new one.
 2. **Readiness.** Run `python scripts/readiness.py --repo <o>/<r> --owner <owner> --markdown`. Add `--create-labels` when labels are missing; that is an authorized setup step. Then add the project's own rows: connectors (Drive, Sheets, Apps Script), secrets, hosting, database and migrations, browser tests, and external APIs and costs.
@@ -29,8 +30,8 @@ For a new project or system, plan with **web-app-project-planning**: in chat, it
    End the file with the line `AWAITING APPROVAL`. Do not call the workflow fully automated while an essential row is BLOCKED or UNVERIFIED.
 4. Run `python scripts/check_plan.py <plan path> --git-base origin/main` and fix it until it passes. Phase 1 changes only the plan file.
 5. Commit once (`Plan: <slug> (awaiting approval)`) and push. On the first plan, open a normal PR, never a draft (REST cannot mark a draft ready). Title: `Plan: <feature> (awaiting approval)`. Body: `Refs #<N>`.
-6. Write the reply: the entry's `reply_header`, then 150 words or fewer. Include the plan link, the PR, a 3-line summary, the items that are not READY with Leo's checklist, and the assumptions. End with: "Reply `APPROVED` (capitals) to build and merge, or `REVISE: <notes>`."
-7. Run `python scripts/loop_gh.py post-plan --repo <o>/<r> --issue <N> --file reply.md --turn <next_turn>`, then stop.
+6. Write the reply: the entry's `reply_header`, then 150 words or fewer. Include the plan link, the PR, a 3-line summary, the items that are not READY with Leo's checklist, the assumptions, and the one `Model:` line from `pick_model.py`. End with: "Reply `APPROVED` (capitals) to build and merge, or `REVISE: <notes>`. Tap Comment, not Close with comment."
+7. Run `python scripts/loop_gh.py post-plan --repo <o>/<r> --issue <N> --file reply.md --turn <next_turn>`. Then verify the hand-off (SKILL.md, step 5) and stop.
 
 **In a chat with Leo:** if no issue exists yet, file one from `references/task-template.md` with `to-code`, then follow the same steps on it. When Leo approves in the chat, run `python scripts/loop_gh.py relay-approval --repo <o>/<r> --issue <N> --turn <next_turn> --quote "<his exact words>"`. Do this only with his actual words, only in that chat, and never from a scheduled run or on your own judgment.
 
@@ -57,10 +58,10 @@ You did not build this change. Judge it on evidence, not on Code's claims.
    - First line: the entry's `reply_header`, with `verdict=approved` or `verdict=changes`.
    - One bullet per finding, tagged `[BLOCKER]`, `[MAJOR]`, `[MINOR]` or `[NIT]`, with file:line, the failure scenario and the fix.
    - Then one line on what you checked, and the test command with its result line.
-   - One line `Model: <tier> (<reason>)`.
+   - One line `Model:` from `pick_model.py` (`Model: opus (via subagent)`, or `Model: sonnet (wanted opus; ran inline, no subagent)`). Never claim a model that did not run.
    - Last two lines: `Reviewed head <sha>`, then `VERDICT: APPROVED` or `VERDICT: CHANGES REQUESTED`.
    - Approve only with no BLOCKER or MAJOR left and the tests passing. 400 words or fewer.
-5. Run `python scripts/loop_gh.py verdict --repo <o>/<r> --issue <N> --pr <P> --file verdict.md --turn <next_turn>`. A head mismatch means Code pushed again: review the new head.
+5. Run `python scripts/loop_gh.py verdict --repo <o>/<r> --issue <N> --pr <P> --file verdict.md --turn <next_turn>`. A head mismatch means Code pushed again: review the new head. Then verify the hand-off (SKILL.md, step 5).
 
 ## Escalate (park with `--from lead` and one batched question)
 

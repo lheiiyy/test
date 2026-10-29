@@ -13,6 +13,7 @@ Code (Claude Code, Engineer):
     loop_gh.py reply   --repo o/r --issue N --file reply.md --turn T --add to-chat    (classic mode)
 Either role:
     loop_gh.py claim   --repo o/r --issue N
+    loop_gh.py reopen  --repo o/r --issue N
     loop_gh.py park    --repo o/r --issue N --turn T --reason "..." [--phase 1|2] [--from code|lead]
 
 claim             adds code-working (the claim label for either role) and removes the waiting
@@ -35,6 +36,9 @@ verify            after a merge: the PR is merged, the merge commit is on the ba
 finish            posts a type=summary phase=2 reply with the five report lines, adds done and
                   closes the issue as completed.
 park              posts a short question; labels needs-leo. Leo answers with CONTINUE: or REVISE:.
+reopen            reopens an issue that Leo closed by tapping "Close with comment" together with his
+                  APPROVED, REVISE: or CONTINUE: (triage lists it under `reopen`). Refuses an issue
+                  that is `done` or was closed as "not planned". Posts nothing and changes no label.
 
 No command can add to-code. --dry-run prints the planned writes without sending them
 (reads still happen; --fixtures DIR replaces them with issue.json, comments.json, pr.json,
@@ -220,6 +224,17 @@ def cmd_finish(a, plan):
     return code, out
 
 
+def cmd_reopen(a, plan):
+    issue_ = read_json(f"repos/{a.repo}/issues/{a.issue}", a.fixtures, "issue.json")
+    labels = {l["name"] if isinstance(l, dict) else l for l in issue_.get("labels") or []}
+    if "done" in labels or issue_.get("state_reason") == "not_planned":
+        return 1, {"ok": False, "problem": "this issue is done or was closed as not planned; leave it closed"}
+    if issue_.get("state") == "open":
+        return 0, {"ok": True, "reopened": a.issue, "already_open": True}
+    gh(["-X", "PATCH", f"repos/{a.repo}/issues/{a.issue}", "-f", "state=open"], a.dry_run, plan)
+    return 0, {"ok": True, "reopened": a.issue}
+
+
 def cmd_park(a, plan):
     phase = f" phase={a.phase}" if a.phase else ""
     body = f"<!-- loop:v1 from={a.sender} type=question{phase} turn={a.turn} -->\nPaused: {a.reason.strip()}\n"
@@ -314,7 +329,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     names = ("claim", "reply", "park", "post-plan", "ready-for-review", "verdict", "relay-approval",
-             "merge", "verify", "finish")
+             "merge", "verify", "finish", "reopen")
     for name in names:
         p = sub.add_parser(name)
         p.add_argument("--repo", required=True)
@@ -348,7 +363,7 @@ def main():
     commands = {"claim": cmd_claim, "reply": cmd_reply, "park": cmd_park, "post-plan": cmd_post_plan,
                 "ready-for-review": cmd_ready_for_review, "verdict": cmd_verdict,
                 "relay-approval": cmd_relay_approval, "merge": cmd_merge, "verify": cmd_verify,
-                "finish": cmd_finish}
+                "finish": cmd_finish, "reopen": cmd_reopen}
     plan = []
     try:
         code, out = commands[a.cmd](a, plan)

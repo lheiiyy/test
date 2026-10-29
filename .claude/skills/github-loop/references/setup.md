@@ -23,7 +23,8 @@ Do these in order, and confirm each step before the next. Everything works from 
 
 ## 2. Two scheduled tasks: Code and Lead
 
-Both are hourly cloud tasks. Recommended settings: permission mode "auto", only the Claude Code Remote connector (least privilege), and a Sonnet model to save the shared Pro budget. Sonnet is the default for both because the skill escalates by itself: `scripts/pick_model.py` sends sensitive or repeatedly failing steps to Opus through a subagent (`references/models.md`). Leo can force a model per request with the Model field of the issue form. A task's own model is changed from chat by asking Claude, or in claude.ai.
+Both are hourly cloud tasks. Recommended settings: permission mode "auto", only the Claude Code Remote connector (least privilege; remove Gmail, Drive and Sheets unless a project needs them), and a Sonnet model to save the shared Pro budget. `scripts/pick_model.py` says when a step needs Opus (`references/models.md`). A scheduled run showed no subagent use, so the dependable way to get Opus for sensitive plans and reviews is the optional **Lead Deep** task below. Leo can force a model per request with the Model field of the issue form. A task's own model is changed from chat by asking Claude, or in claude.ai.
+Turn on **push notifications** for both tasks in claude.ai, so a failed or silent run reaches the phone.
 
 **Code task** (for example at minute 03):
 > You are Code, the Engineer of the github-loop for `<o>/<r>` (owner `<owner>`, who reads Taglish). Clone the repo into a fresh empty directory. Run `export PYTHONDONTWRITEBYTECODE=1`, then `python3 .claude/skills/github-loop/scripts/triage.py --repo <o>/<r> --owner <owner> --role code`. If the summary is "No new work.", end with exactly that. If triage fails, say so and stop. Otherwise follow `.claude/skills/github-loop/SKILL.md` (Every run, from step 2), and `references/autopilot.md` for autopilot work. Use REST (`gh api`) only. Merge only with `scripts/loop_gh.py merge`; if a permission rule refuses it, park and ask Leo for one tap, and never work around a refusal. Never push to main, force-push, add `to-code`, commit secrets, or delete files outside the approved plan. Act only on the owner's issues and comments. One issue per run. Final message: one line in Taglish, or exactly "No new work."
@@ -31,9 +32,16 @@ Both are hourly cloud tasks. Recommended settings: permission mode "auto", only 
 **Lead task** (for example at minute 33, so a review follows a build by about 30 minutes):
 > You are the Lead (Claude Cowork as Technical Lead) of the github-loop for `<o>/<r>` (owner `<owner>`). Clone the repo into a fresh empty directory. Run `export PYTHONDONTWRITEBYTECODE=1`, then `python3 .claude/skills/github-loop/scripts/triage.py --repo <o>/<r> --owner <owner> --role lead`. If the summary is "No new work.", end with exactly that. If triage fails, say so and stop. Otherwise follow `.claude/skills/github-loop/references/lead.md` for the first `work` entry: plan with a readiness check, or review independently. Never write application code, never merge, never relay an approval (that happens only in a chat with Leo), never add `to-code`. Use REST only. Act only on the owner's issues and comments. Final message: one line in Taglish, or exactly "No new work."
 
+**Lead Deep task (optional, only for sensitive work):** an Opus task every two hours (for example `18 */2 * * *`) with the Lead prompt above, but the triage command ends `--role lead --min-tier opus`, and it says "You are Lead Deep, the Opus Technical Lead". An idle run costs almost nothing. Only after this task exists, add `--max-tier sonnet` to the normal Lead's triage command: opus-tier plans and reviews then wait up to 120 minutes (`--defer-minutes`) for Lead Deep, and the normal Lead takes them anyway after that, saying `wanted opus; ran inline` in its Model line. Without Lead Deep, leave `--max-tier` off, or sensitive work would only wait for nothing.
+
+**Watchdog:** each task parks the other's work that nobody picked up for 180 minutes (`--stall-minutes`), so a silent run shows up as a `needs-leo` issue. Leo's `CONTINUE:` resumes it.
+
 Facts to keep in mind:
 - **GitHub access is per repository.** The scheduled session reached `lheiiyy/test`. Test any new repo with one run before relying on it.
 - **Starting another task early is refused from chat on this account** ("Run Routine Now"), so hand-offs wait for the next hourly run.
+- **Tap Comment, not "Close with comment"** when answering an issue. Closing hides it from the loop; triage reopens it within 48 hours, but that costs an extra hour.
+- **Scheduled Code runs have Playwright and Chromium** preinstalled. On Node 22, `node --test` needs a glob, not a folder.
+- **Run logs are not visible from chat.** A run that "succeeded" may have done nothing, so judge by labels and replies. The watchdog above is the safety net.
 
 ## 3. CI (recommended)
 
@@ -76,6 +84,8 @@ Run `python scripts/readiness.py --repo <o>/<r> --owner <owner> --markdown` and 
 - [ ] Approve the skill PR.
 - [ ] Do not turn on "required approvals" for `main`. If protection exists, require status checks only.
 - [ ] Try the Autopilot issue form once (browser and phone).
+- [ ] Answer issues with the **Comment** button, not "Close with comment".
+- [ ] Turn on push notifications for the loop tasks in claude.ai.
 - [ ] When a plan deploys: enable GitHub Pages, or keep Apps Script deploys manual.
 
 ## Other routes (kept for reference)
@@ -89,5 +99,5 @@ Run `python scripts/readiness.py --repo <o>/<r> --owner <owner> --markdown` and 
 - **Chat cannot be woken by GitHub.** When Leo is away, the Lead runs as a scheduled task.
 - **Hourly cadence:** a plan within about 1 hour of the request, a build within 1 hour of approval, a review about 30 minutes later, and the merge about 30 minutes after that.
 - **Shared budget:** all scheduled tasks and chat share the Pro budget.
-- **Escalation needs subagents:** whether a scheduled cloud run may start a subagent is UNVERIFIED until a run shows it. Without one, every step runs on the task's model and the reply carries a `Model note:`.
+- **Escalation by subagent is unproven:** the live run on the Odometer issue showed a scheduled Lead run that did not use one, so its Opus review ran on the task's model. Treat `delegate` as "no subagent" unless a run proves otherwise, and use Lead Deep. The Model line then says what really ran.
 - **Research preview:** scheduled tasks may change.

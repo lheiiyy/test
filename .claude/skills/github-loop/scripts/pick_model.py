@@ -138,14 +138,19 @@ def pick(step, paths=(), text="", tasks=0, attempt=1, round_=1, session=None):
         action = "delegate"
         note = (f"Hand the judgment to a subagent with model={tier}; keep the scripts and the posting in this "
                 f"session. With no Agent tool, run inline and say so in the reply.")
+        lines = {"subagent": f"Model: {tier} (via subagent)",
+                 "inline": f"Model: {running} (wanted {tier}; ran inline, no subagent)"}
     elif RANK[tier] < RANK[running]:
         action = "run inline"
         note = f"{tier} would be enough. Run inline, because a subagent restarts cold and costs more than it saves."
+        lines = {"inline": f"Model: {running} (wanted {tier}; ran inline)"}
     else:
         action = "run inline"
         note = "This task's model fits."
+        lines = {"inline": f"Model: {running}"}
     return {
         "step": step, "tier": tier, "action": action, "session": running, "reasons": [why], "note": note,
+        "model_line": lines,  # paste the one that is true; check_reply.py rejects a reply without it
         "forced": bool(forced),
         "signals": {"docs_only": docs_only, "risk_paths": risk_paths,
                     "risk_text": risk_text.group(1).lower() if risk_text else None,

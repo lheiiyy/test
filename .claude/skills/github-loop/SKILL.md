@@ -1,6 +1,6 @@
 ---
 name: github-loop
-description: Coordinate Leo (Product Owner), Claude Cowork (Technical Lead) and Claude Code (Engineer) through GitHub Issues and pull requests, with no copy-paste relay. Autopilot mode runs plan with readiness check, one approval, build, independent review, fix, scripted merge, verify, deploy when authorized, and report. Use whenever Leo says "send to Code", "check the loop", "set up the loop", "autopilot", "plan then build" or "review the PR", or replies APPROVED, REVISE or CONTINUE on an issue. Also use it when an issue labeled to-code, awaiting-approval, to-review, reviewed or to-chat is in front of you, when a scheduled task fires for the loop, or when drafting an issue for Claude Code, even if "loop" is never said. It also picks the right model for each step (sonnet by default, opus only on risk) and applies Leo's Model override.
+description: Coordinate Leo (Product Owner), Claude Cowork (Technical Lead) and Claude Code (Engineer) through GitHub Issues and pull requests, with no copy-paste relay. Autopilot mode runs plan with readiness check, one approval, build, independent review, fix, scripted merge, verify, deploy when authorized, and report. Use whenever Leo says "send to Code", "check the loop", "set up the loop", "autopilot", "plan then build" or "review the PR", or replies APPROVED, REVISE or CONTINUE on an issue. Also use it when an issue labeled to-code, awaiting-approval, to-review, reviewed or to-chat is in front of you, when a scheduled task fires for the loop, or when drafting an issue for Claude Code, even if "loop" is never said. It also picks the right model for each step (sonnet by default, opus only on risk) and applies Leo's Model override. It also reopens approvals closed by mistake, flags stalled runs, and can split work between a Sonnet and an Opus Lead.
 ---
 
 # github-loop
@@ -34,6 +34,8 @@ An issue is in autopilot mode when its body has Phase 1 and Phase 2 headings (`r
 
 **What Leo does per feature:** files the request, and approves the plan (`APPROVED` on the issue, or in a chat with the Lead). If a platform rule refuses the merge, he also taps Merge once and replies `CONTINUE: merged`. Releases follow the release policy.
 
+**Tap Comment, not "Close with comment".** The second button closes the issue together with the keyword, and the loop scans open issues. Triage notices such an issue (`reopen`) and the next run reopens it, but only within 48 hours and not if it was closed as "not planned".
+
 ## Labels: whose turn it is
 
 | Label | Next actor |
@@ -61,6 +63,9 @@ The first line of every agent comment:
 | `result` | code | phase=2 adds `pr` and the exact `head` |
 | `verdict` | lead | Names `pr`, `head` and `verdict`. Ends with `Reviewed head <sha>`, then `VERDICT: APPROVED` or `VERDICT: CHANGES REQUESTED`. |
 | `summary` | code | phase=2. Carries five report lines: Implemented and tested / Reviewed / Merged / Deployed / Blocked or unverified. |
+
+A plan, a phase 2 result, a verdict and a summary also carry one `Model: <tier>` line (see Model routing). The script refuses the reply without it.
+
 | `question` | either | Used by `park` |
 | `approval` | lead | Relays Leo's approval from a chat, quoting him. Never posted from a scheduled run. |
 | `task`, `result`, `status` | chat, code | Classic mode |
@@ -72,11 +77,15 @@ Run the scripts from the skill folder (`.claude/skills/github-loop/` in a repo) 
 - Add `--dry-run` to any `loop_gh.py` command to see its calls without sending them.
 - Never report a hand-off that did not succeed.
 
-1. **Triage:** `python scripts/triage.py --repo <o>/<r> --owner <owner> --role <code|lead>`.
-   - `No new work.` → say exactly that and stop.
+1. **Triage:** `python scripts/triage.py --repo <o>/<r> --owner <owner> --role <code|lead>` (the task prompt may add `--max-tier` or `--min-tier`, see Model routing).
+   - A summary that starts with `No new work.` → say exactly that and stop. (It may end with "(N deferred to a stronger task)"; that is not work for you.)
    - Exit code 2 or `TRIAGE FAILED` → report the error and stop. A failure is never "No new work."
-2. **Park (Code role only).** For each `needs_leo` and `stale` entry, run `python scripts/loop_gh.py park --repo <o>/<r> --issue <N> --turn <next_turn> --reason "<reason>"`. Add `--phase <phase>` only for autopilot entries (`mode: autopilot`). For a stale entry, the reason is "the previous run stopped after claiming; reply CONTINUE: to retry (re-apply to-code in classic mode)".
-3. **One issue per run.** Take the first `work` entry. Lead work follows `references/lead.md`, Code work follows `references/autopilot.md`, and classic work follows "Classic mode" below.
+2. **Reopen (either role).** For each `reopen` entry, run `python scripts/loop_gh.py reopen --repo <o>/<r> --issue <N>`, then run triage again and use the new result. Leo closed the issue with "Close with comment"; reopening posts nothing and changes no label.
+3. **Park.**
+   - *Code role only:* for each `needs_leo` and `stale` entry, run `python scripts/loop_gh.py park --repo <o>/<r> --issue <N> --turn <next_turn> --reason "<reason>"`. Add `--phase <phase>` only for autopilot entries (`mode: autopilot`). For a stale entry, the reason is "the previous run stopped after claiming; reply CONTINUE: to retry (re-apply to-code in classic mode)".
+   - *Either role:* for each `stalled` entry (the other role's work that nobody picked up), run `park --from <your role> --phase <phase> --turn <next_turn> --reason "No <for_role> run picked up the <work_type> for <waiting_minutes> min; check the <for_role> scheduled task, then reply CONTINUE:"`. Never post a status comment instead: only `park` keeps the thread machine-readable.
+4. **One issue per run.** Take the first `work` entry. Lead work follows `references/lead.md`, Code work follows `references/autopilot.md`, and classic work follows "Classic mode" below.
+5. **Verify the hand-off.** After the post command succeeds, run triage once more: the issue must no longer be in your `work` list (it is now waiting or the other role's). If it still is, the post did not take: check the labels once, retry once, then park with what you saw. This costs one cheap call and catches silent failures.
 
 ## The merge gate (`loop_gh.py merge`)
 
@@ -95,6 +104,8 @@ The head SHA is pinned. Anything else returns an exit code, and the run parks wi
 - **A relayed approval** comes only from a chat Lead, quoting Leo's own words.
 - **Caps.** Autopilot: 20 agent replies, 3 plan revisions, 4 change requests. Classic: 4 turns. Leo can lift a classic cap with an owner `<!-- loop:v1 from=human type=reset turn=0 -->` comment.
 - **Stale claims are surfaced, not hidden:** after 90 minutes, or 180 for an approved build.
+- **Silent runs are surfaced too.** Each role watches the other's pending work and parks it after 180 minutes (`stalled`), so Leo sees a `needs-leo` issue instead of a quiet queue. A role never parks its own work and `--role all` never stalls.
+- **A closed approval is reopened,** within 48 hours, unless the issue is `done` or was closed as "not planned".
 - **The repo is public.** Only the owner's issues and comments count, and nothing confidential is ever committed.
 - **One issue per run, one reply per run.**
 
@@ -115,7 +126,9 @@ Use the cheapest model that does the step reliably, and move up on risk, not on 
 - Opus is for sensitive files (auth, permissions, schema, secrets, deploy, workflows), big changes, an architecture-heavy goal, the third review round, the second plan revision, and the second attempt at a failing fix. A fix escalates once, then parks.
 - `delegate` means hand the judgment to a subagent with that model, and keep the scripts, the checks and the posting in this session. A tier below the task's own runs inline.
 - Leo's `Model: opus|sonnet|haiku` line (or the Model field of the issue form) beats the script. The top tier, fable, only on his word.
-- Put one line `Model: <tier> (<reason>)` in each reply. Never claim a model that did not run. With no Agent tool, run inline and add a `Model note:`.
+- **The Model line is mandatory and exact.** A plan, phase 2 result, verdict and summary carry one line `Model: <haiku|sonnet|opus>`, the model that actually produced the reply. `pick_model.py` prints the true line for each case (`model_line`: `inline` or `subagent`). If the step wanted a higher tier and you ran inline, the line says so: `Model: sonnet (wanted opus; ran inline, no subagent)`. `check_reply.py` rejects a missing, doubled or vague line.
+- **Evidence from the live run:** a scheduled run showed no subagent use, so treat `delegate` as "no subagent" unless a run proves otherwise. For sensitive work, the option that works is a second task on Opus (`references/models.md`, "Two Lead tasks"), or a chat on Opus.
+- Every autopilot `work` entry from triage carries `tier` and `tier_reason` (a quick estimate from the request and the PR's file list). The step still runs `pick_model.py` with the real diff, and that answer wins. A task started with `--max-tier sonnet` leaves opus-tier work in `deferred` for 120 minutes, then takes it with a `tier_note` that must show in its Model line.
 
 ## Skills used when installed, with fallbacks
 

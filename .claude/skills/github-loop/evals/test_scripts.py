@@ -15,6 +15,7 @@ sys.path.insert(0, SCRIPTS)
 sys.dont_write_bytecode = True
 import loop_guard as g  # noqa: E402
 import pick_model as pm  # noqa: E402
+import check_reply as cr  # noqa: E402
 
 NOW = "2026-10-29T12:00:00Z"
 OWNER = "lheiiyy"
@@ -62,7 +63,7 @@ def result_reply(turn, head=SHA1, pr=6):
 def verdict_text(turn, verdict="approved", head=SHA1, pr=6):
     word = "APPROVED" if verdict == "approved" else "CHANGES REQUESTED"
     return (f"<!-- loop:v1 from=lead type=verdict phase=2 pr={pr} head={head} verdict={verdict} turn={turn} -->\n"
-            f"Checked the diff against the plan; tests pass.\nReviewed head {head}\nVERDICT: {word}\n")
+            f"Checked the diff against the plan; tests pass.\nModel: sonnet\nReviewed head {head}\nVERDICT: {word}\n")
 
 
 def verdict_reply(turn, verdict="approved", head=SHA1, pr=6, user=OWNER, assoc="OWNER"):
@@ -472,16 +473,17 @@ class LoopGhTests(unittest.TestCase):
         self.assertTrue(out["comment"].startswith("<!-- loop:v1 from=lead type=question phase=1 turn=4 -->"))
 
     def test_post_plan_is_the_leads(self):
-        path = self.reply_file("<!-- loop:v1 from=lead type=plan phase=1 turn=2 -->\nPlan: docs/plan-x.md\n")
+        path = self.reply_file("<!-- loop:v1 from=lead type=plan phase=1 turn=2 -->\nPlan: docs/plan-x.md\nModel: sonnet\n")
         code, out, _ = self.gh("post-plan", "--file", path, "--turn", "2")
         self.assertEqual(code, 0)
         self.assertIn("labels[]=awaiting-approval", out["dry_run_calls"][-1])
         code, out, _ = self.gh("post-plan", "--file", self.reply_file(
-            "<!-- loop:v1 from=code type=plan phase=1 turn=2 -->\nok\n"), "--turn", "2")
+            "<!-- loop:v1 from=code type=plan phase=1 turn=2 -->\nok\nModel: sonnet\n"), "--turn", "2")
         self.assertEqual(code, 1)
 
     def test_ready_for_review_names_the_current_head(self):
-        good = self.reply_file(f"<!-- loop:v1 from=code type=result phase=2 pr=6 head={SHA1} turn=3 -->\nReady.\n")
+        good = self.reply_file(f"<!-- loop:v1 from=code type=result phase=2 pr=6 head={SHA1} turn=3 -->\nReady.\n"
+                               "Model: sonnet\n")
         code, out, _ = self.gh("ready-for-review", "--pr", "6", "--file", good, "--turn", "3",
                                "--fixtures", self.pr_fixture())
         self.assertEqual(code, 0)
@@ -490,7 +492,7 @@ class LoopGhTests(unittest.TestCase):
                                "--fixtures", self.pr_fixture(head=SHA2))
         self.assertEqual(code, 1)
         self.assertEqual(out["dry_run_calls"], [])
-        nohead = self.reply_file("<!-- loop:v1 from=code type=result phase=2 pr=6 turn=3 -->\nReady.\n")
+        nohead = self.reply_file("<!-- loop:v1 from=code type=result phase=2 pr=6 turn=3 -->\nReady.\nModel: sonnet\n")
         code, _, _ = self.gh("ready-for-review", "--pr", "6", "--file", nohead, "--turn", "3",
                              "--fixtures", self.pr_fixture())
         self.assertEqual(code, 1)
@@ -527,14 +529,16 @@ class LoopGhTests(unittest.TestCase):
     def test_finish_needs_the_report_lines(self):
         report = ("Implemented and tested: README, 2 tests pass.\nReviewed: Lead approved head x.\n"
                   "Merged: abc on main.\nDeployed: not part of this plan.\nBlocked or unverified: none.\n")
-        good = self.reply_file("<!-- loop:v1 from=code type=summary phase=2 turn=6 -->\n" + report + "word " * 150)
+        good = self.reply_file("<!-- loop:v1 from=code type=summary phase=2 turn=6 -->\nModel: haiku\n" + report
+                               + "word " * 150)
         code, out, _ = self.gh("finish", "--file", good, "--turn", "6")
         self.assertEqual(code, 0)
         self.assertIn("state=closed", out["dry_run_calls"][-1])
         code, out, _ = self.gh("finish", "--file", self.reply_file(
             "<!-- loop:v1 from=code type=summary phase=2 turn=6 -->\nAll done!\n"), "--turn", "6")
         self.assertEqual(code, 1)
-        too_long = self.reply_file("<!-- loop:v1 from=code type=summary phase=2 turn=6 -->\n" + report + "word " * 260)
+        too_long = self.reply_file("<!-- loop:v1 from=code type=summary phase=2 turn=6 -->\nModel: haiku\n" + report
+                                   + "word " * 260)
         self.assertEqual(self.gh("finish", "--file", too_long, "--turn", "6")[0], 1)
 
     def test_verify(self):
@@ -915,6 +919,283 @@ class PickModelTests(unittest.TestCase):
         code, out, _ = run(script, "--step", "review", "--git-range", "HEAD~1..HEAD", "--session", "sonnet", cwd=d)
         self.assertEqual((code, out["tier"], out["signals"]["risk_paths"]), (0, "opus", ["src/auth.js"]))
         self.assertEqual(run(script, "--step", "review", "--git-range", "nosuchref..HEAD", cwd=d)[0], 2)
+
+
+def ap_body(objective="Add a README to odometer-trips.", model=None):
+    body = REQUEST.replace("Add a README to odometer-trips.", objective)
+    if model:
+        body = body.replace("## Context", f"## Model (leave Auto unless you want to force one)\n{model}\n\n## Context")
+    return body
+
+
+def ap_item(number, labels, comments=(), body=None, updated="2026-10-29T11:59:00Z", **extra):
+    return dict(ap_issue(labels, comments or ()), number=number, title=f"autopilot {number}", comments=0, updated_at=updated,
+                body=body or REQUEST, **extra)
+
+
+def triage_run(files, *flags):
+    code, out, err = run(os.path.join(SCRIPTS, "triage.py"), "--repo", "o/r", "--owner", OWNER,
+                         "--fixtures", write_fixtures(files), "--now", NOW, *flags)
+    assert code == 0, err
+    return out
+
+
+class ModelLineTests(unittest.TestCase):
+    PLAN = "<!-- loop:v1 from=lead type=plan phase=1 turn=2 -->\nPlan ready.\n"
+    RESULT = f"<!-- loop:v1 from=code type=result phase=2 pr=6 head={SHA1} turn=3 -->\nReady.\n"
+
+    def problems(self, text, add="awaiting-approval", expect_from="lead", turn=2):
+        return cr.check(text, turn, [add], ["code-working"], expect_from=expect_from)["problems"]
+
+    def test_autopilot_replies_need_a_model_line(self):
+        self.assertTrue(any("Model" in p for p in self.problems(self.PLAN)))
+        self.assertEqual(self.problems(self.PLAN + "Model: sonnet\n"), [])
+        self.assertTrue(any("Model" in p for p in self.problems(self.RESULT, "to-review", "code", 3)))
+        self.assertEqual(self.problems(self.RESULT + "Model: opus\n", "to-review", "code", 3), [])
+        verdict = verdict_text(5).replace("Model: sonnet\n", "")
+        self.assertTrue(any("Model" in p for p in self.problems(verdict, "reviewed", "lead", 5)))
+        self.assertEqual(self.problems(verdict_text(5), "reviewed", "lead", 5), [])
+        summary = ("<!-- loop:v1 from=code type=summary phase=2 turn=6 -->\nImplemented and tested: x.\nReviewed: x.\n"
+                   "Merged: x.\nDeployed: x.\nBlocked or unverified: none.\n")
+        self.assertTrue(any("Model" in p for p in self.problems(summary, "done", "code", 6)))
+        self.assertEqual(self.problems(summary + "Model: haiku\n", "done", "code", 6), [])
+
+    def test_other_replies_need_none(self):
+        classic = "<!-- loop:v1 from=code type=result turn=2 -->\nDone.\n"
+        self.assertEqual(self.problems(classic, "to-chat", "code"), [])
+        question = "<!-- loop:v1 from=code type=question phase=2 turn=2 -->\nPaused: why.\n"
+        self.assertEqual(self.problems(question, "needs-leo", "code"), [])
+
+    def test_the_line_must_be_exact_and_single(self):
+        bad = {"two tiers": "Model: sonnet/opus\n", "unknown": "Model: gpt\n", "empty": "Model:\n",
+               "twice": "Model: sonnet\nModel: opus\n", "a good line and a bad one": "Model: sonnet\nModel : opus\n",
+               "space before the colon": "Model : sonnet\n",
+               "not at the line start": "I used Model: sonnet\n"}
+        for name, line in bad.items():
+            with self.subTest(name):
+                self.assertTrue(any("Model" in p for p in self.problems(self.PLAN + line)), line)
+        # "Model plan:" in a reply is not a second Model line
+        self.assertEqual(self.problems(self.PLAN + "Model plan: build sonnet.\nModel: sonnet\n"), [])
+
+    def test_a_tier_gap_must_say_how_it_was_handled(self):
+        gap = "Model: sonnet (wanted opus)\n"
+        self.assertTrue(any("inline or via subagent" in p for p in self.problems(self.PLAN + gap)))
+        for ok in ("Model: sonnet (wanted opus; ran inline, no subagent)\n", "Model: opus (via subagent)\n",
+                   "Model: opus (wanted sonnet; ran inline)\n", "Model: sonnet (wanted sonnet)\n"):
+            with self.subTest(ok):
+                self.assertEqual(self.problems(self.PLAN + ok), [])
+
+    def test_pick_model_prints_a_line_that_passes_the_check(self):
+        for session, tier_text in (("sonnet", "## Objective\nAdd role-based permissions.\n"),
+                                   ("opus", "## Objective\nAdd a README.\n"),
+                                   ("sonnet", "## Objective\nAdd a README.\n")):
+            report = pm.pick("review", text=tier_text, session=session)
+            for how, line in report["model_line"].items():
+                with self.subTest(session=session, how=how):
+                    self.assertEqual(self.problems(self.PLAN + line + "\n"), [], line)
+        gap = pm.pick("review", text="## Objective\nAdd role-based permissions.\n", session="sonnet")
+        self.assertEqual(sorted(gap["model_line"]), ["inline", "subagent"])
+        self.assertEqual(gap["model_line"]["subagent"], "Model: opus (via subagent)")
+        self.assertIn("wanted opus", gap["model_line"]["inline"])
+
+
+class ReopenTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        def closed(number, labels, comments, updated="2026-10-29T11:30:00Z", **extra):
+            return ap_item(number, labels, comments, updated=updated, state="closed", **extra)
+
+        cls.files = {
+            "issues.json": [],
+            "closed.json": [
+                closed(40, ["awaiting-approval"], None),                                   # APPROVED, then closed
+                closed(41, ["awaiting-approval"], None, state_reason="not_planned"),       # abandoned on purpose
+                closed(42, ["awaiting-approval", "done"], None),                           # finished
+                closed(43, ["awaiting-approval"], None),                                   # no keyword yet
+                closed(44, ["awaiting-approval"], None, updated="2026-10-26T11:30:00Z"),   # too old
+                dict(issue(45, ["needs-leo"]), state="closed"),                            # classic issue
+                closed(46, ["needs-leo"], None),                                           # CONTINUE
+                closed(47, ["to-review"], None),                                           # not an owner-wait state
+                closed(48, ["awaiting-approval"], None, pull_request={"url": "x"}),        # a PR
+            ],
+            "40.comments.json": APPROVED_THREAD,
+            "41.comments.json": APPROVED_THREAD,
+            "42.comments.json": APPROVED_THREAD,
+            "43.comments.json": [plan_reply()],
+            "44.comments.json": APPROVED_THREAD,
+            "45.comments.json": [comment(2), c("CONTINUE: go")],
+            "46.comments.json": APPROVED_THREAD + [question(2, 3), c("CONTINUE: keep the old name")],
+            "47.comments.json": APPROVED_THREAD + [result_reply(4)],
+            "48.comments.json": APPROVED_THREAD,
+        }
+
+    def test_only_a_closed_issue_with_the_owners_keyword_pending_is_reopened(self):
+        out = triage_run(self.files)
+        self.assertEqual([(r["number"], r["would_run"]) for r in out["reopen"]], [(40, "build"), (46, "continue")])
+        self.assertIn("2 to reopen", out["summary"])
+        self.assertEqual(out["work"], [])  # triage lists it; the agent reopens it and runs triage again
+
+    def test_the_window_can_be_widened_or_removed(self):
+        out = triage_run(self.files, "--reopen-hours", "0")
+        self.assertEqual([r["number"] for r in out["reopen"]], [40, 44, 46])
+
+    def test_a_closed_queue_costs_nothing_when_nothing_is_pending(self):
+        out = triage_run({"issues.json": [], "closed.json": [dict(issue(5, ["done"]), state="closed")]})
+        self.assertEqual((out["summary"], out["reopen"]), ("No new work.", []))
+
+    def test_reopen_command(self):
+        def reopen(**issue_):
+            files = {"issue.json": dict(ap_item(40, ["awaiting-approval"]), **issue_)}
+            return run(os.path.join(SCRIPTS, "loop_gh.py"), "reopen", "--repo", "o/r", "--issue", "40",
+                       "--fixtures", write_fixtures(files), "--dry-run")
+        code, out, _ = reopen(state="closed")
+        self.assertEqual((code, out["reopened"]), (0, 40))
+        self.assertEqual(out["dry_run_calls"], ["gh api -X PATCH repos/o/r/issues/40 -f state=open"])
+        code, out, _ = reopen(state="open")
+        self.assertEqual((code, out["already_open"], out["dry_run_calls"]), (0, True, []))
+        for name, change in {"done": {"state": "closed", "labels": [{"name": "done"}]},
+                             "not planned": {"state": "closed", "state_reason": "not_planned"}}.items():
+            with self.subTest(name):
+                code, out, _ = reopen(**change)
+                self.assertEqual((code, out["dry_run_calls"]), (1, []))
+
+
+class TriageTierTests(unittest.TestCase):
+    SENSITIVE = "Add role-based permissions to the app."
+
+    def files(self, body=None, comments=None, labels=("to-code",), updated="2026-10-29T11:55:00Z", extra=None):
+        d = {"issues.json": [ap_item(50, list(labels), body=body or ap_body(), updated=updated)],
+             "50.events.json": [event("to-code", OWNER, updated)]}
+        if comments is not None:
+            d["50.comments.json"] = comments
+        d.update(extra or {})
+        return d
+
+    def work(self, out):
+        return {w["number"]: w for w in out["work"]}
+
+    def test_every_work_entry_carries_its_tier(self):
+        w = self.work(triage_run(self.files(), "--role", "lead"))[50]
+        self.assertEqual(w["tier"], "sonnet")
+        self.assertIn("sonnet is the floor", w["tier_reason"])
+        w = self.work(triage_run(self.files(body=ap_body(self.SENSITIVE)), "--role", "lead"))[50]
+        self.assertEqual(w["tier"], "opus")
+
+    def test_leos_model_field_decides_the_tier(self):
+        body = ap_body(self.SENSITIVE, model="sonnet")
+        self.assertEqual(self.work(triage_run(self.files(body=body), "--role", "lead"))[50]["tier"], "sonnet")
+        body = ap_body("Add a README.", model="opus")
+        self.assertEqual(self.work(triage_run(self.files(body=body), "--role", "lead"))[50]["tier"], "opus")
+
+    def test_a_task_defers_work_above_its_tier_then_takes_it_after_the_timeout(self):
+        body = ap_body(self.SENSITIVE)
+        out = triage_run(self.files(body=body), "--role", "lead", "--max-tier", "sonnet")
+        self.assertEqual(out["work"], [])
+        d = out["deferred"][0]
+        self.assertEqual((d["number"], d["tier"], d["waiting_minutes"], d["takes_over_in"]), (50, "opus", 5, 115))
+        self.assertTrue(out["summary"].startswith("No new work."))
+        self.assertIn("1 deferred", out["summary"])
+        late = triage_run(self.files(body=body, updated="2026-10-29T09:30:00Z"), "--role", "lead",
+                          "--max-tier", "sonnet")
+        w = self.work(late)[50]
+        self.assertEqual((late["deferred"], w["tier"]), ([], "opus"))
+        self.assertIn("say so in the Model line", w["tier_note"])
+        self.assertIn("150 min", w["tier_note"])
+
+    def test_the_timeout_can_be_changed(self):
+        body = ap_body(self.SENSITIVE)
+        out = triage_run(self.files(body=body), "--role", "lead", "--max-tier", "sonnet", "--defer-minutes", "3")
+        self.assertEqual((out["deferred"], len(out["work"])), ([], 1))
+
+    def test_work_at_or_below_the_tier_is_not_deferred(self):
+        out = triage_run(self.files(), "--role", "lead", "--max-tier", "sonnet")
+        self.assertEqual((len(out["work"]), out["deferred"]), (1, []))
+        self.assertNotIn("tier_note", out["work"][0])
+        out = triage_run(self.files(body=ap_body(self.SENSITIVE)), "--role", "lead", "--max-tier", "opus")
+        self.assertEqual((len(out["work"]), out["deferred"]), (1, []))
+
+    def test_a_stronger_task_takes_only_the_work_that_needs_it(self):
+        deep = triage_run(self.files(body=ap_body(self.SENSITIVE)), "--role", "lead", "--min-tier", "opus")
+        self.assertEqual([w["number"] for w in deep["work"]], [50])
+        plain = triage_run(self.files(), "--role", "lead", "--min-tier", "opus")
+        self.assertEqual(plain["work"], [])
+        self.assertIn("only takes opus", plain["ignored"][0]["reason"])
+
+    def test_review_tier_reads_the_prs_files(self):
+        thread = APPROVED_THREAD + [result_reply(4)]
+
+        def review(files_json=None):
+            extra = {"pr6.files.json": files_json} if files_json is not None else None
+            return self.work(triage_run(self.files(comments=thread, labels=("to-review",), extra=extra),
+                                        "--role", "lead"))[50]
+        self.assertEqual(review([{"filename": "odometer-trips/app/main.js"}])["tier"], "sonnet")
+        self.assertEqual(review([{"filename": "odometer-trips/app/auth/login.js"}])["tier"], "opus")
+        self.assertEqual(review([{"filename": f"app/f{n}.js"} for n in range(8)])["tier"], "opus")
+        self.assertEqual(review()["tier"], "sonnet")  # no file list: a floor, not a failure
+
+    def test_a_repeated_revision_asks_for_the_stronger_model(self):
+        first = [plan_reply(), c("REVISE: shorter")]
+        second = first + [plan_reply(4), c("REVISE: shorter still")]
+        w = self.work(triage_run(self.files(comments=first, labels=("awaiting-approval",)), "--role", "lead"))[50]
+        self.assertEqual((w["work_type"], w["round"], w["tier"]), ("revise", 1, "sonnet"))
+        w = self.work(triage_run(self.files(comments=second, labels=("awaiting-approval",)), "--role", "lead"))[50]
+        self.assertEqual((w["round"], w["tier"]), (2, "opus"))
+
+    def test_classic_issues_have_no_tier(self):
+        out = triage_run({"issues.json": [issue(1, ["to-code"])], "1.events.json": [event("to-code", OWNER, NOW)]})
+        self.assertNotIn("tier", out["work"][0])
+
+
+class TriageStalledTests(unittest.TestCase):
+    PLAN_WORK = ap_item(60, ["to-code"], updated="2026-10-29T08:00:00Z")        # Lead's, 240 min old
+    BUILD_WORK = ap_item(61, ["awaiting-approval"], updated="2026-10-29T08:00:00Z")  # Code's, 240 min old
+    FRESH_PLAN = ap_item(62, ["to-code"], updated="2026-10-29T11:00:00Z")        # Lead's, 60 min old
+
+    def files(self):
+        return {"issues.json": [self.PLAN_WORK, self.BUILD_WORK, self.FRESH_PLAN],
+                "60.events.json": [event("to-code", OWNER, "2026-10-29T08:00:00Z")],
+                "62.events.json": [event("to-code", OWNER, "2026-10-29T11:00:00Z")],
+                "61.comments.json": APPROVED_THREAD}
+
+    def test_each_role_reports_the_others_silent_work(self):
+        code = triage_run(self.files(), "--role", "code")
+        self.assertEqual([s["number"] for s in code["stalled"]], [60])
+        s = code["stalled"][0]
+        self.assertEqual((s["for_role"], s["work_type"], s["phase"], s["next_turn"], s["waiting_minutes"]),
+                         ("lead", "plan", 1, 2, 240))
+        self.assertEqual([w["number"] for w in code["work"]], [61])
+        self.assertTrue(any(i["number"] == 62 for i in code["ignored"]))  # 60 min is only one cycle
+        self.assertIn("1 stalled", code["summary"])
+        lead = triage_run(self.files(), "--role", "lead")
+        self.assertEqual([s["number"] for s in lead["stalled"]], [61])
+        self.assertEqual((lead["stalled"][0]["for_role"], lead["stalled"][0]["phase"]), ("code", 2))
+        self.assertEqual([w["number"] for w in lead["work"]], [60, 62])
+
+    def test_a_role_never_reports_its_own_work_and_all_never_stalls(self):
+        out = triage_run(self.files(), "--role", "all")
+        self.assertEqual(out["stalled"], [])
+        self.assertEqual([w["number"] for w in out["work"]], [60, 61, 62])
+
+    def test_a_classic_issue_is_never_reported_as_stalled(self):
+        old = dict(issue(70, ["to-code"]), updated_at="2026-10-29T08:00:00Z")
+        out = triage_run({"issues.json": [old], "70.events.json": [event("to-code", OWNER, "2026-10-29T08:00:00Z")]},
+                         "--role", "lead")
+        self.assertEqual((out["stalled"], out["work"]), ([], []))
+
+    def test_the_stall_limit_can_be_changed(self):
+        out = triage_run(self.files(), "--role", "code", "--stall-minutes", "30")
+        self.assertEqual([s["number"] for s in out["stalled"]], [60, 62])
+        out = triage_run(self.files(), "--role", "code", "--stall-minutes", "300")
+        self.assertEqual(out["stalled"], [])
+
+    def test_a_stalled_item_is_parked_with_the_matching_phase(self):
+        s = triage_run(self.files(), "--role", "code")["stalled"][0]
+        code, out, _ = run(os.path.join(SCRIPTS, "loop_gh.py"), "park", "--repo", "o/r", "--issue", str(s["number"]),
+                           "--turn", str(s["next_turn"]), "--phase", str(s["phase"]), "--from", "code",
+                           "--reason", "no run picked up the plan for 240 min", "--dry-run")
+        self.assertEqual(code, 0)
+        self.assertTrue(out["comment"].startswith("<!-- loop:v1 from=code type=question phase=1 turn=2 -->"))
+        self.assertIn("labels[]=needs-leo", out["dry_run_calls"][-1])
 
 
 if __name__ == "__main__":
