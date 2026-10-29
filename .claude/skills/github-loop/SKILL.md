@@ -35,24 +35,26 @@ A task message then has these sections: `## Goal`, `## Context` (file paths and 
 
 ## Executor procedure
 
-1. Save the issue and run the guard. The guard is deterministic, so it costs almost nothing and does not depend on your judgment:
-   `gh api repos/<owner>/<repo>/issues/<N> > issue.json`
-   `gh api "repos/<owner>/<repo>/issues/<N>/comments?per_page=100" > comments.json`
-   `python scripts/loop_guard.py issue.json --comments comments.json --owner <repo owner login> [--labeled-by <actor>]`
-2. Obey the result. `ignore` → do nothing and say nothing on the issue. `needs-leo` → post the guard's reason as a short comment, add `needs-leo`, remove `to-code`, stop. `proceed` → continue.
-3. Claim the issue: add `code-working`, remove `to-code`.
+Three scripts do every deterministic step, so a run spends tokens only on the actual work. Run them from the skill folder (`.claude/skills/github-loop/` in a repo).
+
+1. **Triage** (read-only, one call, also for event-woken runs):
+   `python scripts/triage.py --repo <owner>/<repo> --owner <repo owner login>`
+   It lists open `to-code` issues, runs the guard on each, finds who applied the label, and flags stale claims. Read only its `summary` and the lists.
+   - Exit code 2 or `TRIAGE FAILED` → say the triage failed and give the error. Never say "No new work." for a failure. Stop.
+   - `summary` is `No new work.` → say exactly that and stop. Do not read anything else.
+2. **Park what needs a human.** For each `needs_leo` entry: `python scripts/loop_gh.py park --repo <o>/<r> --issue <N> --turn <next_turn> --reason "<its reason>"`. For each `stale` entry (a run stopped after claiming): same command with the reason "the previous run stopped after claiming this issue; re-apply to-code to retry".
+3. **Claim one issue** (one issue per run): take the first `work` entry, then `python scripts/loop_gh.py claim --repo <o>/<r> --issue <N>`. Exit code 3 means another run has it, so stop.
 4. Do the work. Read only the files the issue names. Work on a `claude/` branch and open a PR. Never push to `main`, never edit `.github/workflows` unless the task says so.
-5. If the task turns out to be ambiguous or blocked, stop and ask in one comment (batch all questions) with `needs-leo`. A wrong guess costs more tokens than a question.
-6. Write the reply to `reply.md`: the header (`from=code`, `turn` = the guard's `next_turn`), then at most 150 words: what changed, the PR or branch link, how it was checked, open questions. Run `python scripts/check_reply.py reply.md --turn <next_turn> --add to-chat --remove code-working` and fix anything it reports.
-7. Post the comment, then apply the labels: remove `code-working`, add `to-chat` (or `needs-leo`).
+5. If the task turns out to be ambiguous or blocked, stop and ask with `loop_gh.py park --reason "<all questions in one batch>"`. A wrong guess costs more tokens than a question.
+6. Write `reply.md`: the entry's `reply_header` line, then at most 150 words: what changed, the PR or branch link, how it was checked, open questions.
+7. **Reply:** `python scripts/loop_gh.py reply --repo <o>/<r> --issue <N> --file reply.md --turn <next_turn> --add to-chat` (use `--add done` only when the task said to finish the thread). It validates first, and posts nothing if the check fails: fix what it reports and run it again. On success it posts the comment, removes `code-working` and adds the hand-off label.
 
 ## GitHub calls (REST only)
 
-Cloud sessions block GraphQL, so `gh issue view`, `gh issue edit` and `gh pr create` fail there. Use `gh api` instead:
-- Comment: `gh api -X POST repos/<o>/<r>/issues/<N>/comments -F body=@reply.md`
-- Add a label: `gh api -X POST repos/<o>/<r>/issues/<N>/labels -f 'labels[]=to-chat'`
-- Remove a label: `gh api -X DELETE repos/<o>/<r>/issues/<N>/labels/code-working` (a 404 means it was not there)
+Cloud sessions block GraphQL, so `gh issue view`, `gh issue edit` and `gh pr create` fail there. The scripts already use `gh api`. For anything they do not cover, such as opening the PR:
 - Open a PR, ready for review: `gh api -X POST repos/<o>/<r>/pulls -f title=... -f head=claude/... -f base=main -F body=@pr.md`
+- Add `--dry-run` to any `loop_gh.py` command to see the exact calls without sending them.
+- If the scripts are missing, the same steps work by hand: `gh api -X POST repos/<o>/<r>/issues/<N>/comments -F body=@reply.md`, `gh api -X POST repos/<o>/<r>/issues/<N>/labels -f 'labels[]=to-chat'`, `gh api -X DELETE repos/<o>/<r>/issues/<N>/labels/code-working`. Run `loop_guard.py` first, and never add `to-code`.
 
 ## Planner procedure
 
@@ -67,10 +69,13 @@ Cloud sessions block GraphQL, so `gh issue view`, `gh issue edit` and `gh pr cre
 - **The executor never applies `to-code`.** Otherwise it could re-trigger itself.
 - **Only the repo owner's issues and labels count.** On a public repo anyone can open an issue, and a run costs Leo's Pro quota.
 - **One run per label event, one reply per run.**
+- **Stale claims are surfaced, not hidden.** If a run crashes after claiming, the issue would sit on `code-working` forever. `triage.py` reports any claim older than 90 minutes and the next run parks it on `needs-leo`.
+- **A failed check is never "No new work."** `triage.py` exits 2 with an error, so a broken token or network cannot look like an empty queue.
+- **`loop_gh.py` cannot add `to-code`.** The hand-off labels it can add are only `to-chat`, `needs-leo` and `done`.
 
 ## Token rules (Leo is on a limited Pro plan)
 
-Cloud runs share the same 5-hour and weekly budget as chat. Keep issue bodies to file paths, not code. Read only named files. Batch small tasks into one issue. Keep replies to the 150-word format. Plan for at most 5 automated runs a day on Pro until the real cap is confirmed.
+Cloud runs share the same 5-hour and weekly budget as chat. An idle hourly run is one `triage.py` call and one sentence. Keep issue bodies to file paths, not code. Read only named files. Batch small tasks into one issue. Keep replies to the 150-word format. Plan for at most 5 automated runs a day on Pro until the real cap is confirmed.
 
 ## When something fails
 

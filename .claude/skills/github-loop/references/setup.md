@@ -17,7 +17,8 @@ Uses the Pro subscription, no API key, no YAML, no terminal.
 ## Alternative route: scheduled task without the GitHub App (what Leo's other repos use)
 
 The GitHub-event trigger can only be created in the claude.ai UI, and it needs the Claude GitHub App. A cron scheduled task needs neither, and can be made from chat with the scheduled-task tools:
-- **Hourly check:** a scheduled task that lists open `to-code` issues by the repo owner with `gh api` and ends with "No new work." when there are none. An idle run takes about 15 seconds. Leo's TLMI-AI tasks run hourly this way and succeed, so the "5 runs a day on Pro" limit from the launch post does not appear to be enforced.
+- **Hourly check:** a scheduled task that runs `scripts/triage.py` and ends with "No new work." when nothing is waiting. The script does the listing, the guard, the label-actor check and stale-claim detection, so an idle run is one command. Leo's TLMI-AI tasks run hourly with the same shape and succeed, so the "5 runs a day on Pro" limit from the launch post does not appear to be enforced. Suggested prompt, short on purpose:
+  > Clone `<owner>/<repo>`. Run `python .claude/skills/github-loop/scripts/triage.py --repo <owner>/<repo> --owner <owner>` from the repo root. If the summary is "No new work.", reply with exactly that and stop. If triage fails, say so and stop. Otherwise follow `.claude/skills/github-loop/SKILL.md` (executor procedure, steps 2 to 7) for the first `work` entry. Never merge, never push to `main`, never add `to-code`. Final message: one line in Taglish.
 - **Poke-only:** a scheduled task with no schedule at all, started by `fire_trigger` right after the planner creates the issue. It costs nothing while idle, but a label added by hand in the GitHub app does not wake it.
 - Use REST (`gh api`) everywhere; GraphQL is blocked in cloud sessions.
 
