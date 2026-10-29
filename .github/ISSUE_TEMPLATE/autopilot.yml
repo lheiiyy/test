@@ -1,13 +1,13 @@
 name: Autopilot request
-description: Claude plans one feature, you approve once by commenting APPROVED, then Claude builds, tests and merges it.
+description: The Lead plans one feature with a readiness check, you approve once, then Claude Code builds, the Lead reviews, and Code merges and reports.
 title: "Autopilot: "
 labels: ["to-code"]
 body:
   - type: markdown
     attributes:
       value: |
-        Fill the first seven fields; the rest are Leo's standard rules and can stay as they are.
-        Claude posts a plan within about an hour. Then comment `APPROVED` (capitals) to build and merge,
+        Fill the first eight fields; the rest are Leo's standard rules and can stay as they are.
+        The Lead posts a plan and readiness matrix within about an hour. Then comment `APPROVED` (capitals) to build and merge,
         `REVISE: <notes>` to change the plan, or `CONTINUE: <answer>` to answer a question.
   - type: input
     id: objective
@@ -60,6 +60,16 @@ body:
       description: Who uses it. It must work on desktop, tablet and phone.
     validations:
       required: true
+  - type: dropdown
+    id: release-policy
+    attributes:
+      label: Release policy
+      options:
+        - no deploy
+        - staging automatic
+        - production after my CONTINUE release
+    validations:
+      required: true
   - type: textarea
     id: context
     attributes:
@@ -73,9 +83,10 @@ body:
         Write <project folder>/docs/plan-<feature>.md with these sections, each kept tight:
         1. Business plan: problem, users, value, scope, out-of-scope, success metrics, risks, effort estimate.
         2. Architecture: components, data flow, schema changes, integration points, migration path, key decisions with one-line reasons.
-        3. Task breakdown: ordered tasks, each with the files touched and a pass/fail check.
+        3. Task breakdown: ordered tasks, each with the responsible agent, the files touched and a pass/fail check.
         4. Test plan: what gets tested, with which tooling, and what "tests pass" means.
-        5. Merge plan: branch name, merge method, and the conditions for merging.
+        5. Merge plan: branch name, merge method, the conditions for merging, and the release policy.
+        6. Readiness: READY / NEEDS SETUP / BLOCKED / NOT REQUIRED / UNVERIFIED for every dependency, and one checklist of what I must do by hand.
         End the file with the line "AWAITING APPROVAL". Make no code changes in Phase 1.
     validations:
       required: true
@@ -88,7 +99,8 @@ body:
         1. Create a feature branch. Implement the tasks in order, one commit per task.
         2. Set up the test harness from the test plan, write the tests, run them.
         3. Debug failures: find the root cause before fixing, fix the cause and not the symptom, then re-run.
-        4. When every acceptance criterion passes, merge to the main branch using the plan's merge method. Update the project docs with status, decisions and test results.
+        4. The Lead reviews the exact head independently; Code fixes until the verdict is APPROVED.
+        5. When every acceptance criterion passes, merge to the main branch using the plan's merge method, verify the merge, and deploy only as the release policy says. Update the project docs with status, decisions and test results.
     validations:
       required: true
   - type: textarea
