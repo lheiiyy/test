@@ -74,4 +74,26 @@ Model plan: build sonnet for tasks 1 to 5 and haiku for task 6 (documentation on
 3. Decide later whether CSV export is the first task of slice 2.
 4. Do not turn on "required approvals" on `main`.
 
-AWAITING APPROVAL
+APPROVED by lheiiyy on 2026-10-29
+
+## Status
+
+**Status:** built on `claude/trip-log-core` (tasks 1 to 6), waiting for the Lead's review. Not merged, no deploy.
+
+**Run it**
+- Unit tests: `node --test 'odometer-trips/tests/unit/*.test.mjs'`
+- Browser check: `node odometer-trips/tests/e2e/trip-flow.cjs` (needs the preinstalled Playwright)
+- App: serve the repo root over http (for example `python3 -m http.server`), open `/odometer-trips/app/`. Add `?transport=mock` for the test fixtures.
+
+**Test results (2026-10-29, Node 22.23.4)**
+- Unit: 27 of 27 passed (repository 10, services 10, API 7); the existing README test also passes (30 in all).
+- Browser: passed at 1280, 768 and 375 px with the mock transport (add vehicle, both rejections, save trip, reload, two-tap void), plus a local-transport reload check. No console errors, failed requests or sideways scroll.
+- Not run: real touch on Leo's tablet and the 30-second hand timing.
+
+**Decisions made while building**
+- The test command takes a glob: `node --test odometer-trips/tests/unit` (a folder) fails on Node 22.
+- Node prints a `MODULE_TYPELESS_PACKAGE_JSON` warning for `app/*.js`; adding a `package.json` would be a new file outside the plan, so the warning stays.
+- `odometer-trips/README.md` is unchanged: `tests/readme.test.mjs` requires a title and exactly one sentence, so run instructions and results live here.
+- The mock transport keeps its own store (`sessionStorage`, key `odometer-trips:mock`) so a reload works in the browser check and test data never mixes with real data.
+- Plates are stored in capitals and must be unique among active vehicles. Fuel type is one of Gasoline, Diesel, Electric, Hybrid, Other.
+- Void needs two taps (Void, then Confirm void); there is no pop-up dialog.
