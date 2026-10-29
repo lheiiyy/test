@@ -33,7 +33,7 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from rules import declared_risk  # noqa: E402
+from rules import declared_risk, declared_scope  # noqa: E402
 
 HEADER = re.compile(r"<!--\s*loop:v1\s+([^>]*?)-->")
 KEYWORD = re.compile(r"\A\s*(APPROVED\b|REVISE:|CONTINUE:)\s*(.*)\Z", re.DOTALL)
@@ -185,12 +185,14 @@ def approval_status(issue, owner):
 
 
 def plan_facts(issue, owner):
-    """What the latest plan reply declares: `Risk: low|normal|high` and `CI required: yes|no`."""
+    """What the latest plan reply declares: `Risk: low|normal|high`, `CI required: yes|no` and
+    `Files in scope: ...` (None when the line is missing)."""
     msgs = thread(issue)
     idx = latest_plan_index(agent_replies(msgs, owner))
     body = msgs[idx]["body"] if idx is not None else ""
     ci = CI_LINE.search(body)
-    return {"risk": declared_risk(body), "ci_required": bool(ci and ci.group(1).lower() == "yes")}
+    return {"risk": declared_risk(body), "ci_required": bool(ci and ci.group(1).lower() == "yes"),
+            "scope": declared_scope(body)}
 
 
 def review_history(msgs, owner):

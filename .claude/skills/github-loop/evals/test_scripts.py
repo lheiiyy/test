@@ -50,7 +50,8 @@ def c(body, user=OWNER, assoc="OWNER"):
 
 
 def plan_reply(turn=2, sender="lead"):
-    return c(f"<!-- loop:v1 from={sender} type=plan phase=1 turn={turn} -->\nPlan ready: docs/plan-readme.md")
+    return c(f"<!-- loop:v1 from={sender} type=plan phase=1 turn={turn} -->\nPlan ready: docs/plan-readme.md\n"
+             "Files in scope: src/, tests/, docs/, db/, odometer-trips/, README.md, .github/, .claude/")
 
 
 def question(phase, turn, sender="code"):
@@ -476,12 +477,12 @@ class LoopGhTests(unittest.TestCase):
     def test_post_plan_is_the_leads(self):
         plan = self.reply_file(GOOD_PLAN)
         path = self.reply_file("<!-- loop:v1 from=lead type=plan phase=1 turn=2 -->\nPlan: docs/plan-x.md\nModel: sonnet\n"
-                               "Risk: low\nCI required: no\n")
+                               "Risk: low\nCI required: no\nFiles in scope: docs/\n")
         code, out, _ = self.gh("post-plan", "--file", path, "--turn", "2", "--plan-file", plan)
         self.assertEqual(code, 0, out)
         self.assertIn("labels[]=awaiting-approval", out["dry_run_calls"][-1])
         code, out, _ = self.gh("post-plan", "--file", self.reply_file(
-            "<!-- loop:v1 from=code type=plan phase=1 turn=2 -->\nok\nModel: sonnet\nRisk: low\nCI required: no\n"),
+            "<!-- loop:v1 from=code type=plan phase=1 turn=2 -->\nok\nModel: sonnet\n" + PLAN_REPLY_TAIL),
             "--turn", "2", "--plan-file", plan)
         self.assertEqual(code, 1)
 
@@ -664,6 +665,7 @@ A test checks the file exists.
 Branch claude/readme. Method: merge commit. Merge when the Lead approves and the test passes. Deploy: none.
 Risk: low
 CI required: no
+Files in scope: odometer-trips/README.md, docs/plan-readme.md
 
 ## 6. Readiness
 | Item | Status |
@@ -958,7 +960,8 @@ def triage_run(files, *flags):
 
 
 class ModelLineTests(unittest.TestCase):
-    PLAN = "<!-- loop:v1 from=lead type=plan phase=1 turn=2 -->\nPlan ready.\nRisk: low\nCI required: no\n"
+    PLAN = ("<!-- loop:v1 from=lead type=plan phase=1 turn=2 -->\nPlan ready.\nRisk: low\nCI required: no\n"
+            "Files in scope: docs/\n")
     RESULT = f"<!-- loop:v1 from=code type=result phase=2 pr=6 head={SHA1} turn=3 -->\nReady.\n"
 
     def problems(self, text, add="awaiting-approval", expect_from="lead", turn=2):
@@ -1340,7 +1343,7 @@ def reply_path(test, text):
 SUMMARY = ("<!-- loop:v1 from=code type=summary phase=2 turn=6 -->\nImplemented and tested: README, 2 tests pass.\n"
            "Reviewed: Lead approved the head.\nMerged: abc on main.\nDeployed: not part of this plan.\n"
            "Blocked or unverified: none.\nModel: haiku\n")
-PLAN_REPLY_TAIL = "Risk: low\nCI required: no\n"
+PLAN_REPLY_TAIL = "Risk: low\nCI required: no\nFiles in scope: odometer-trips/, docs/\n"
 
 
 class ApprovalRuleTests(unittest.TestCase):
@@ -1410,7 +1413,8 @@ class CheckReplyRuleTests(unittest.TestCase):
         self.assertFalse(check(base)["ok"])
         self.assertFalse(check(base + "Risk: low\n")["ok"])
         self.assertTrue(check(base + PLAN_REPLY_TAIL)["ok"])
-        self.assertTrue(check(base + "- **Risk:** high\n- CI required: yes\n")["ok"])
+        self.assertTrue(check(base + "- **Risk:** high\n- CI required: yes\n- **Files in scope:** `src/`\n")["ok"])
+        self.assertFalse(check(base + "Risk: low\nCI required: no\n")["ok"])  # no Files in scope line
 
     def test_session_must_match_the_model_line(self):
         reply = f"<!-- loop:v1 from=code type=result phase=2 pr=6 head={SHA1} turn=3 -->\nReady.\n"
@@ -1490,8 +1494,8 @@ class MergeGateRuleTests(unittest.TestCase):
     def test_the_owners_merge_words_from_a_session_merge_and_are_recorded(self):
         code, out, _ = self.merge(files=["src/auth/login.js"], extra=("--owner-merge-quote", "MERGE it, checked"))
         self.assertEqual(code, 0, out)
-        self.assertIn("commit_message=High-risk merge authorized by lheiiyy in a chat session: “MERGE it, "
-                      "checked”", out["dry_run_calls"][0])
+        self.assertIn("high-risk change", out["dry_run_calls"][0])
+        self.assertIn("authorized by lheiiyy in a chat session: “MERGE it, checked”", out["dry_run_calls"][0])
         code, out, _ = self.merge(files=["src/auth/login.js"], extra=("--owner-merge-quote", "go ahead"))
         self.assertEqual(code, 1, out)
         self.assertEqual(out["dry_run_calls"], [])
@@ -1516,6 +1520,79 @@ class MergeGateRuleTests(unittest.TestCase):
     def test_risk_is_judged_after_every_other_gate(self):
         code, _, _ = self.merge(files=["src/auth/login.js"], mergeable_state="dirty")
         self.assertEqual(code, 5)  # the owner is only asked to tap Merge when everything else is green
+
+
+class ScopeTests(unittest.TestCase):
+    """D4 a: a CONTINUE: keeps the approval, but a changed file outside the plan's scope parks the merge."""
+
+    def test_scope_patterns(self):
+        import rules
+        pats = rules.declared_scope("- **Files in scope:** `odometer-trips/`, docs/plan-x.md, src/*.js, lib/**")
+        self.assertEqual(pats, ["odometer-trips/", "docs/plan-x.md", "src/*.js", "lib/**"])
+        for path, inside in (("odometer-trips/app/main.js", True), ("docs/plan-x.md", True), ("docs/other.md", False),
+                             ("src/a.js", True), ("lib/x/y.py", True), ("README.md", False)):
+            with self.subTest(path):
+                self.assertEqual(rules.in_scope(path, pats), inside)
+        self.assertIsNone(rules.declared_scope("Out of scope: the app\nScope: one file"))
+        self.assertTrue(rules.scope_problems(["**"]))
+        self.assertTrue(rules.scope_problems([]))
+        self.assertEqual(rules.scope_problems(["src/"]), [])
+
+    def merge(self, thread_, files, *extra):
+        issue_ = ap_issue(["code-working"])
+        issue_.pop("comments")
+        fx = write_fixtures({"issue.json": issue_, "comments.json": thread_, "pr.json": MergeTests.PR,
+                             "files.json": [{"filename": f} for f in files]})
+        return run(os.path.join(SCRIPTS, "loop_gh.py"), "merge", "--repo", "o/r", "--issue", "9", "--pr", "6",
+                   "--owner", OWNER, "--fixtures", fx, "--dry-run", *extra)
+
+    def thread(self, scope_line, *between):
+        plan = c("<!-- loop:v1 from=lead type=plan phase=1 turn=2 -->\nPlan ready.\n" + scope_line)
+        return [plan, c("APPROVED"), *between, result_reply(4), verdict_reply(5)]
+
+    def test_a_file_outside_the_scope_waits_for_the_owner(self):
+        code, out, _ = self.merge(self.thread("Files in scope: odometer-trips/"), ["odometer-trips/app.js", "other.js"])
+        self.assertEqual(code, 9, out)
+        self.assertEqual(out["outside_scope"], ["other.js"])
+        self.assertEqual(out["dry_run_calls"], [])
+        self.assertEqual(self.merge(self.thread("Files in scope: odometer-trips/"), ["odometer-trips/app.js"])[0], 0)
+
+    def test_a_plan_without_a_scope_line_waits_for_the_owner(self):
+        code, out, _ = self.merge(self.thread("Risk: low"), ["odometer-trips/app.js"])
+        self.assertEqual(code, 9, out)
+        self.assertEqual(self.merge(self.thread("Risk: low"), [])[0], 9)  # no files changed, still no scope
+        self.assertEqual(self.merge(self.thread("Files in scope: *"), ["a.js"])[0], 9)  # a scope that checks nothing
+
+    def test_continue_keeps_the_approval_but_not_extra_files(self):
+        thread_ = self.thread("Files in scope: odometer-trips/", c("CONTINUE: also update the root README"))
+        self.assertEqual(self.merge(thread_, ["odometer-trips/app.js"])[0], 0)
+        code, out, _ = self.merge(thread_, ["odometer-trips/app.js", "README.md"])
+        self.assertEqual((code, out["outside_scope"]), (9, ["README.md"]))
+
+    def test_the_owners_merge_words_cover_scope_and_risk(self):
+        thread_ = self.thread("Files in scope: odometer-trips/")
+        code, out, _ = self.merge(thread_, ["src/auth.js"])
+        self.assertEqual(code, 9)  # outside the scope and high risk: the scope is named first
+        self.assertIn("high-risk", out["problem"])
+        code, out, _ = self.merge(thread_, ["src/auth.js"], "--owner-merge-quote", "MERGE checked it")
+        self.assertEqual(code, 0, out)
+        self.assertIn("files outside the plan's scope (src/auth.js) and a high-risk change", out["dry_run_calls"][0])
+
+    def test_plans_and_replies_must_declare_a_real_scope(self):
+        no_scope = GOOD_PLAN.replace("Files in scope: odometer-trips/README.md, docs/plan-readme.md\n", "")
+        self.assertTrue(any("Files in scope" in p for p in check_plan_text(no_scope)))
+        broad = GOOD_PLAN.replace("Files in scope: odometer-trips/README.md, docs/plan-readme.md", "Files in scope: *")
+        self.assertTrue(any("real folders" in p for p in check_plan_text(broad)))
+        missing_plan = GOOD_PLAN.replace(", docs/plan-readme.md", "")
+        self.assertTrue(any("include the plan file" in p for p in check_plan_text(missing_plan, changed=True)))
+        reply = "<!-- loop:v1 from=lead type=plan phase=1 turn=2 -->\nPlan.\nModel: sonnet\nRisk: low\nCI required: no\n"
+        self.assertFalse(cr.check(reply, 2, ["awaiting-approval"], ["code-working"], expect_from="lead")["ok"])
+
+
+def check_plan_text(text, changed=False):
+    import check_plan
+    rel = "docs/plan-readme.md"
+    return check_plan.check(text, rel, [rel] if changed else None)["problems"]
 
 
 class FinishRuleTests(unittest.TestCase):

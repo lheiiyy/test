@@ -18,7 +18,7 @@ GitHub is the shared source of truth. Issues carry requests and hand-offs, pull 
 **Your role:** in a chat with the owner you are the Lead; in a scheduled run, the role in the task prompt; asked to set up the loop, follow `references/setup.md` one step at a time (every step works from a tablet browser).
 
 - Approving the plan authorizes the routine work in its scope, including a merge of normal or low risk.
-- High-risk work (rules in `scripts/rules.py`: auth and permissions, secrets, schema and migrations, deploys, `.github/`, the skill itself, or `Risk: high` in the plan) is merged by the owner: a Merge tap, or the owner's own `MERGE ...` words in a chat session.
+- High-risk work (rules in `scripts/rules.py`: auth and permissions, secrets, schema and migrations, deploys, `.github/`, the skill itself, or `Risk: high` in the plan) is merged by the owner: a Merge tap, or the owner's own `MERGE ...` words in a chat session. So is a PR that changes a file outside the plan's `Files in scope:` line.
 - Nothing overrides platform permissions, repository rules or security controls. Self-review is not review.
 
 ## Lifecycle (autopilot mode)
@@ -48,7 +48,7 @@ First line of every agent comment: `<!-- loop:v1 from=code|lead|chat type=TYPE [
 
 | Type | From | Rule |
 |---|---|---|
-| `plan` | lead | phase=1. Carries `Risk: low\|normal\|high` and `CI required: yes\|no` lines (the merge gate reads them). |
+| `plan` | lead | phase=1. Carries `Risk: low\|normal\|high`, `CI required: yes\|no` and `Files in scope: <folders/ and files>` lines (the merge gate reads them). |
 | `result` | code | phase=2 adds `pr` and the exact `head` |
 | `verdict` | lead | Names `pr`, `head` and `verdict`. Ends with `Reviewed head <sha>`, then `VERDICT: APPROVED` or `VERDICT: CHANGES REQUESTED`. |
 | `summary` | code | phase=2. Five lines: Implemented and tested / Reviewed / Merged / Deployed / Blocked or unverified. |
@@ -73,12 +73,12 @@ Run the scripts from the skill folder (`.claude/skills/github-loop/` in a repo) 
 
 ## The merge gate (`loop_gh.py merge`)
 
-Merges only when: the owner approved the latest plan and no `REVISE:` came after it; the latest Lead verdict approves the PR's exact head and names this PR, as does the latest Code result; no check is failing or pending, and one exists when the plan says `CI required: yes`; the PR is open, not a draft, from this repository, on a `claude/` branch, against the base, cleanly mergeable, with its whole file list read; and the change is not high risk. The head SHA is pinned. Exit codes: 4 not approved, 5 not mergeable, 6 checks, 8 high risk (the owner merges). Park with the reason; never work around a refusal, whether it comes from the script, GitHub or the platform.
+Merges only when: the owner approved the latest plan and no `REVISE:` came after it; the latest Lead verdict approves the PR's exact head and names this PR, as does the latest Code result; no check is failing or pending, and one exists when the plan says `CI required: yes`; the PR is open, not a draft, from this repository, on a `claude/` branch, against the base, cleanly mergeable, with its whole file list read; every changed file is inside the plan's `Files in scope:`; and the change is not high risk. The head SHA is pinned. Exit codes: 4 not approved, 5 not mergeable, 6 checks, 8 high risk, 9 outside the scope (for 8 and 9 the owner decides: `REVISE:`, a Merge tap, or `MERGE ...` in a chat session). Park with the reason; never work around a refusal, whether it comes from the script, GitHub or the platform.
 
 ## Guards (why each exists)
 
 - **Only `to-code` starts work, and agents never add it**, so the loop cannot trigger itself.
-- **Keywords count only from the owner**, at the very start of a comment, in capitals, after the latest agent reply. `REVISE:` cancels an approval until a revised plan is posted; `CONTINUE:` keeps it. Agent comments start with a header, so they never read as keywords.
+- **Keywords count only from the owner**, at the very start of a comment, in capitals, after the latest agent reply. `REVISE:` cancels an approval until a revised plan is posted; `CONTINUE:` keeps it, but a file outside the plan's scope still waits for the owner at the merge. Agent comments start with a header, so they never read as keywords.
 - **A relayed approval** comes only from a chat Lead and quotes the owner's words, which must start with `APPROVED`; the final summary repeats the quote.
 - **Caps:** 20 agent replies, 3 plan revisions, 4 change requests (autopilot); 4 turns (classic). Stale claims surface after 90 minutes (180 for a build); each role parks the other's work untouched for 180 minutes (`stalled`).
 - **`finish` needs a merged PR** (or `No PR: yes` in the issue), so an open PR is never reported as done.

@@ -24,8 +24,9 @@ Rules:
   `(wanted opus; ran inline, no subagent)` or `(via subagent)`, so the gap is never hidden.
   With --session (the model this task runs on), the line must name that model unless it says
   `via subagent`, so a Sonnet task cannot claim an Opus review.
-- A plan reply also carries `Risk: low|normal|high` and `CI required: yes|no`; the merge gate
-  reads both (a high risk means the owner merges, CI required means checks must exist).
+- A plan reply also carries `Risk: low|normal|high`, `CI required: yes|no` and
+  `Files in scope: <folders/ and files>`; the merge gate reads all three (high risk or a file
+  outside the scope means the owner merges; CI required means checks must exist).
 - A relayed approval quotes the owner's own words, and those words start with APPROVED:
   `APPROVED by <name> in chat on <date>: "APPROVED ..."`.
 - Word limits: 150 by default, 250 for a summary, 400 for a verdict (findings need room).
@@ -35,8 +36,12 @@ Rules:
 """
 import argparse
 import json
+import os
 import re
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from rules import declared_scope, scope_problems  # noqa: E402
 
 HEADER = re.compile(r"<!--\s*loop:v1\s+([^>]*?)-->")
 URL = re.compile(r"https?://\S+")
@@ -129,6 +134,7 @@ def check(text, turn, add, remove, max_words=None, expect_from="code", session=N
                 problems.append("a plan reply carries one line `Risk: low|normal|high` (high: the owner merges)")
             if not CI_LINE.search(text):
                 problems.append("a plan reply carries one line `CI required: yes|no` (yes: checks must exist to merge)")
+            problems += [f"a plan reply: {p}" for p in scope_problems(declared_scope(text))]
         if rtype == "summary":
             low = text.lower()
             missing = [l for l in REPORT_LINES if l + ":" not in low]

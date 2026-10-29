@@ -37,11 +37,13 @@ merge             merges ONLY when (1) the owner approved the latest plan and no
                   exists when the plan says `CI required: yes` or --require-checks is given
                   (exit 6), (4) the PR is open, not a draft, from this repository (never a fork),
                   on a claude/ branch, against the base, cleanly mergeable, and its whole file
-                  list was read (exit 5), and (5) the change is not high risk (exit 8): a
-                  sensitive file, the skill itself, or `Risk: high` in the plan. A high-risk PR
-                  is merged by the owner: a Merge tap on GitHub, or --owner-merge-quote with the
-                  owner's own words from a chat session, starting with MERGE (recorded in the
-                  merge commit message). The head SHA is pinned, so nothing pushed later slips in.
+                  list was read (exit 5), (5) every changed file is inside the plan's
+                  `Files in scope:` (exit 9), and (6) the change is not high risk (exit 8): a
+                  sensitive file, the skill itself, or `Risk: high` in the plan. A PR that fails
+                  (5) or (6) is merged by the owner: a Merge tap on GitHub, or --owner-merge-quote
+                  with the owner's own words from a chat session, starting with MERGE (recorded in
+                  the merge commit message). The head SHA is pinned, so nothing pushed later
+                  slips in.
 verify            after a merge: the PR is merged, the merge commit is on the base branch, and
                   the check runs on the merge commit are reported (exit 7 if not merged or
                   not on the base).
@@ -65,7 +67,7 @@ compare.json and repo.json for offline tests).
 The owner is --owner, else "owner" in .github/github-loop.json, else the user who owns the repo.
 Exit codes: 0 ok, 1 reply failed validation, 2 GitHub call failed, 3 already claimed,
 4 not approved, 5 PR not mergeable, 6 checks not green, 7 not merged or no PR, 8 high risk:
-the owner merges.
+the owner merges, 9 a changed file outside the plan's scope: the owner decides.
 """
 import argparse
 import datetime
@@ -83,7 +85,7 @@ from check_reply import check  # noqa: E402
 from ghapi import ApiError, call, from_fixture, get_all, get_json  # noqa: E402
 from loop_guard import (approval_status, first_header, plan_facts, review_status,  # noqa: E402
                         set_owner_associations)
-from rules import risk_tier  # noqa: E402
+from rules import outside_scope, risk_tier, scope_problems  # noqa: E402
 
 GhError = ApiError  # older name, kept for callers
 HANDOFF = {"to-chat", "needs-leo", "done"}
@@ -421,20 +423,29 @@ def cmd_merge(a, plan):
     if problems:
         return 5, {"ok": False, "problem": "not merging: " + "; ".join(problems)}
 
+    scope = facts["scope"]
+    outside = scope_problems(scope) or outside_scope(paths, scope)
     risk, reasons = risk_tier(paths, facts["risk"])
+    owner_needed = []  # (exit code, why): the owner decides these, never an agent
+    if outside:
+        owner_needed.append((9, "files outside the plan's scope (" + ", ".join(outside) + ")"))
+    if risk == "high":
+        owner_needed.append((8, "a high-risk change (" + "; ".join(reasons) + ")"))
     args = ["-X", "PUT", f"repos/{a.repo}/pulls/{a.pr}/merge", "-f", f"merge_method={a.method}", "-f",
             f"sha={head['sha']}"]
-    if risk == "high":
+    if owner_needed:
         quote = " ".join((a.owner_merge_quote or "").split())
+        why = " and ".join(text for _, text in owner_needed)
         if not quote:
-            return 8, {"ok": False, "risk": risk, "risk_reasons": reasons,
-                       "problem": "not merging: high-risk change (" + "; ".join(reasons) + "). Every gate is green, so "
-                                  "the owner merges it: a Merge tap on GitHub, or the owner's own words starting with "
-                                  "MERGE in a chat session (--owner-merge-quote)"}
+            return owner_needed[0][0], {
+                "ok": False, "risk": risk, "risk_reasons": reasons, "outside_scope": outside,
+                "problem": f"not merging: {why}. Every other gate is green, so the owner decides: REVISE: to widen the "
+                           "plan, a Merge tap on GitHub, or the owner's own words starting with MERGE in a chat "
+                           "session (--owner-merge-quote)"}
         if not quote.startswith("MERGE"):
             return 1, {"ok": False, "problems": ["--owner-merge-quote must be the owner's own words, starting with "
                                                  "MERGE (capitals)"]}
-        args += ["-f", f"commit_message=High-risk merge authorized by {a.owner_name or a.owner} in a chat session: "
+        args += ["-f", f"commit_message=Merge of {why} authorized by {a.owner_name or a.owner} in a chat session: "
                        f"“{quote}”"]
     raw = gh(args, a.dry_run, plan, retry=False)
     result = json.loads(raw) if raw else {}
