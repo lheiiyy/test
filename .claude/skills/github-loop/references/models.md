@@ -1,0 +1,52 @@
+# Model routing: the right model for each step
+
+Use the cheapest model that does the step reliably. Move up on **risk**, not on effort, and never skimp on review. The choice comes from `scripts/pick_model.py`, which reads facts (files, goal, attempt, round) and not a feeling, so two runs choose alike.
+
+```
+python3 scripts/pick_model.py --step <plan|revise|build|fix|review|merge|verify|report> \
+    [--git-range <base>...<head> | --paths <files>] [--text <issue body file>] \
+    [--tasks N] [--attempt N] [--round N] --session <model of this task>
+```
+
+`--session` is the model this task runs on: `haiku`, `sonnet` or `opus` (a full ID such as `claude-sonnet-5-5` also works; if unsure, `sonnet`). The reply gives `tier`, `action` (`run inline` or `delegate`), the reason, and the signals it saw. Exit 2 means bad input.
+
+## The rules
+
+| Step | Default | Moves to opus when | Cheaper when |
+|---|---|---|---|
+| `merge`, `verify` | haiku | never | always: a scripted command and its exit code |
+| `report` | sonnet | never | never: it states results as facts |
+| `plan`, `revise` | sonnet | the goal names sensitive things (login, permissions, schema, payments, credentials), the goal is architecture-heavy (new system, rewrite), 5 or more tasks, or this is the second revision | never: sonnet is the floor |
+| `review` | sonnet | sensitive files changed, 8 or more files, or the third round | never: sonnet is the floor, even for documentation |
+| `build` | sonnet | sensitive files **and** a big change | haiku when only `.md`, `.txt` or `.rst` files change |
+| `fix` | sonnet | sensitive files, the third review round, or the **second attempt** at the same failure | haiku for documentation only |
+
+Sensitive files: names containing auth, permission, role, acl, secret, token, credential, password, pin, schema, migration, `.sql`, payment, billing, payroll, security, deploy, `.env`; also `.github/`, `appsscript.json` and `.clasp*`. Documentation-only changes are never sensitive, except under `.github/`.
+
+Only the goal counts for risk words in a request (the Objective section), because the rest of the template holds boilerplate such as "schema changes" and "credentials".
+
+## Who decides
+
+1. **Leo** beats everything: a `Model: opus|sonnet|haiku` line in the request, or the Model field of the issue form (Auto means no override). It applies to plan, revise, build, fix and review, never to merge or verify.
+2. **The script** decides the rest. The plan's `Model plan:` line is the Lead's estimate from the request; the run asks again with the real files.
+3. A run may go **one tier up** from the script's answer with its reason written in the reply. It never goes down, and it never uses `fable`, the top tier, which only Leo asks for.
+
+## Using the answer
+
+- **`run inline`:** do the step on this task's model. If the tier is lower than the task's, still run inline: a subagent restarts cold and costs more than it saves. The task's own model sets the cost.
+- **`delegate`:** the tier is above this task's model. Hand the **judgment** to a subagent (Agent tool, `model` set to the tier) and keep the scripts, the checks and the posting in this session. Give the subagent only what it needs:
+
+  > You are doing one step of the github-loop for `<o>/<r>`, issue #N: `<step>`. Work in `<dir>` on branch `<branch>`. Read only `<files>`. Deliverable: write `<file>` as `<format from lead.md or autopilot.md>`. Do not post to GitHub, change labels, merge or push. Reply with the file path and the test result line.
+
+  Then verify its work yourself: for a review, `git rev-parse` must equal the head Code named, and the tests must have run fresh; run `check_reply.py` or `check_plan.py`; post with the `loop_gh.py` command.
+- **No Agent tool in this session:** run the step inline and add `Model note: <tier> recommended (<reason>); ran on <session>.` to the reply. For a sensitive review, Leo can say "review the PR" in a chat on Opus.
+- **Say what ran:** put one line `Model: <tier> (<reason>)` in the reply, for example `Model: opus (subagent): auth files changed`. Never claim a model that did not run.
+
+## Recommended task setup
+
+Put both scheduled tasks on **Sonnet**: triage costs almost nothing and Sonnet is the workhorse for builds and reviews. Opus is then used only where the rules above say so. The skill cannot change a task's own model, and a scheduled run can only go up by delegating. Ask Claude in chat to change a task's model.
+
+## Known limits
+
+- Whether a scheduled cloud run can start subagents is **UNVERIFIED** until a run shows it. Without them, the fallback above keeps the loop working on the task's model.
+- The script sees file names and the goal, not hidden complexity. That is why a run may go one tier up, and why review never drops below sonnet.

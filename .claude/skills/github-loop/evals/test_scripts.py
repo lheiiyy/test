@@ -14,6 +14,7 @@ SCRIPTS = os.path.join(os.path.dirname(HERE), "scripts")
 sys.path.insert(0, SCRIPTS)
 sys.dont_write_bytecode = True
 import loop_guard as g  # noqa: E402
+import pick_model as pm  # noqa: E402
 
 NOW = "2026-10-29T12:00:00Z"
 OWNER = "lheiiyy"
@@ -635,6 +636,8 @@ Migration path: none. Key decisions: plain Markdown.
 |---|---|---|---|---|
 | 1 | Write README | Code | odometer-trips/README.md | file exists |
 
+Model plan: build haiku (documentation only), review sonnet, fix sonnet.
+
 ## 4. Test plan
 A test checks the file exists.
 
@@ -683,6 +686,19 @@ class CheckPlanTests(unittest.TestCase):
         self.assertIn("Business plan does not cover: risk", out["problems"])
         code, out = self.check(GOOD_PLAN.replace(" Deploy: none.", ""))
         self.assertIn("Merge plan does not cover: deploy", out["problems"])
+
+    def test_task_breakdown_needs_a_model_plan(self):
+        code, out = self.check(GOOD_PLAN.replace("Model plan: build haiku (documentation only), review sonnet, "
+                                                 "fix sonnet.", ""))
+        self.assertEqual(code, 1)
+        self.assertTrue(any(p.startswith("Task breakdown has no model plan") for p in out["problems"]), out)
+        # a tier named only in another section does not count
+        moved = GOOD_PLAN.replace("Model plan: build haiku (documentation only), review sonnet, fix sonnet.", "")
+        moved = moved.replace("Effort estimate: 10 minutes.", "Effort estimate: 10 minutes. Opus is not needed.")
+        self.assertEqual(self.check(moved)[0], 1)
+        # opus-style words inside other words do not count
+        self.assertEqual(self.check(GOOD_PLAN.replace("Model plan: build haiku (documentation only), review "
+                                                      "sonnet, fix sonnet.", "Model plan: sonnets only."))[0], 1)
 
     def test_final_line_must_be_exact(self):
         for ending in ["Awaiting approval", "AWAITING APPROVAL.", "AWAITING APPROVAL\nP.S. extra"]:
@@ -762,6 +778,143 @@ class ReadinessTests(unittest.TestCase):
         code, out, _ = run(os.path.join(SCRIPTS, "readiness.py"), "--repo", "o/r", "--owner", OWNER,
                            "--fixtures", write_fixtures({}))
         self.assertEqual(code, 2)
+
+
+AUTH_FILES = ["src/auth/login.js", "tests/login.test.js"]
+FORM_REQUEST = ("### Objective\n\nAdd a README to odometer-trips\n\n### Model (leave Auto unless you want to force "
+                "one)\n\n{model}\n\n### Phase 1: Plan (do this first, then stop)\n\nArchitecture: components, "
+                "schema changes, migration path.\nNever commit secrets or clasp credentials.\n")
+
+
+class PickModelTests(unittest.TestCase):
+    def tier(self, step, session="sonnet", **kw):
+        return pm.pick(step, session=session, **kw)["tier"]
+
+    def test_scripted_steps_are_cheap_and_reports_are_accurate(self):
+        for session in ("haiku", "sonnet", "opus"):
+            self.assertEqual(self.tier("merge", session, paths=AUTH_FILES), "haiku")
+            self.assertEqual(self.tier("verify", session, paths=AUTH_FILES), "haiku")
+        self.assertEqual(self.tier("report"), "sonnet")
+
+    def test_plan_floor_and_escalation(self):
+        self.assertEqual(self.tier("plan", text="## Objective\nAdd a README.\n"), "sonnet")
+        self.assertEqual(self.tier("plan", text="## Objective\nAdd role-based permissions to the app.\n"), "opus")
+        self.assertEqual(self.tier("plan", text="## Objective\nBuild a new system from scratch.\n"), "opus")
+        self.assertEqual(self.tier("plan", tasks=5), "opus")
+        self.assertEqual(self.tier("revise", round_=1), "sonnet")
+        self.assertEqual(self.tier("revise", round_=2), "opus")
+
+    def test_template_boilerplate_is_not_risk(self):
+        text = FORM_REQUEST.format(model="Auto")
+        self.assertEqual(self.tier("plan", text=text), "sonnet")
+        self.assertEqual(pm.objective_of(text).strip(), "Add a README to odometer-trips")
+        # a free-form request without an Objective heading is read whole
+        self.assertEqual(self.tier("plan", text="Please change the payment flow."), "opus")
+
+    def test_review_never_goes_below_sonnet_and_escalates_on_risk(self):
+        self.assertEqual(self.tier("review", paths=["docs/guide.md"]), "sonnet")
+        r = pm.pick("review", paths=AUTH_FILES, session="sonnet")
+        self.assertEqual((r["tier"], r["action"]), ("opus", "delegate"))
+        self.assertIn("src/auth/login.js", r["reasons"][0])
+        self.assertEqual(self.tier("review", paths=[f"src/f{i}.js" for i in range(8)]), "opus")
+        self.assertEqual(self.tier("review", paths=["src/a.js"], round_=3), "opus")
+        self.assertEqual(self.tier("review", paths=["src/a.js"], round_=2), "sonnet")
+
+    def test_risk_matching_has_no_obvious_false_positives(self):
+        for path in ("src/author-list.js", "docs/permissions.md", "src/spinner.js", "src/enroll.js", "README.md"):
+            with self.subTest(path=path):
+                self.assertEqual(self.tier("review", paths=[path]), "sonnet")
+        for path in ("src/user_roles.js", "src/acl.js", "db/schema.sql", "appsscript.json", ".github/workflows/t.yml",
+                     ".clasp.json", "src/Permissions.gs", "config/.env", "src/pin.js", "tools/deploy.js"):
+            with self.subTest(path=path):
+                self.assertEqual(self.tier("review", paths=[path]), "opus")
+
+    def test_docs_only_is_not_risk_but_github_markdown_is(self):
+        self.assertTrue(pm.pick("build", paths=["docs/deploy.md", "README.md"])["signals"]["docs_only"])
+        self.assertEqual(self.tier("review", paths=["docs/deploy.md"]), "sonnet")
+        self.assertFalse(pm.pick("build", paths=[".github/notes.md"])["signals"]["docs_only"])
+        self.assertEqual(self.tier("review", paths=[".github/notes.md"]), "opus")
+
+    def test_build_tiers(self):
+        self.assertEqual(self.tier("build", paths=["docs/a.md"]), "haiku")
+        self.assertEqual(self.tier("build", paths=["src/a.js"]), "sonnet")
+        self.assertEqual(self.tier("build", paths=AUTH_FILES), "sonnet")  # risky alone: the review is the safeguard
+        self.assertEqual(self.tier("build", paths=AUTH_FILES, tasks=5), "opus")
+
+    def test_fix_escalates_before_the_run_parks(self):
+        self.assertEqual(self.tier("fix", paths=["src/a.js"]), "sonnet")
+        r = pm.pick("fix", paths=["src/a.js"], attempt=2, session="sonnet")
+        self.assertEqual((r["tier"], r["action"]), ("opus", "delegate"))
+        self.assertEqual(self.tier("fix", paths=AUTH_FILES), "opus")
+        self.assertEqual(self.tier("fix", paths=["docs/a.md"]), "haiku")
+        self.assertEqual(self.tier("fix", paths=["docs/a.md"], attempt=2), "opus")
+        self.assertEqual(self.tier("fix", paths=["src/a.js"], round_=3), "opus")
+
+    def test_leo_can_force_a_tier(self):
+        for text in ("Model: opus", "model: opus", "### Model (leave Auto unless you want to force one)\n\nopus\n"):
+            with self.subTest(text=text):
+                r = pm.pick("review", paths=["docs/a.md"], text="## Objective\nx\n" + text, session="sonnet")
+                self.assertEqual((r["tier"], r["forced"]), ("opus", True))
+        r = pm.pick("review", paths=AUTH_FILES, text="Model: haiku", session="sonnet")
+        self.assertEqual((r["tier"], r["action"]), ("haiku", "run inline"))
+        for text in ("Model: auto", FORM_REQUEST.format(model="Auto"), "Model plan: opus for the review",
+                     "We use a data model: opus is not involved"):
+            with self.subTest(text=text):
+                self.assertFalse(pm.pick("review", paths=["docs/a.md"], text=text)["forced"])
+        # scripted steps ignore it
+        self.assertEqual(pm.pick("merge", text="Model: opus")["tier"], "haiku")
+        self.assertEqual(pm.pick("plan", text=FORM_REQUEST.format(model="sonnet"))["tier"], "sonnet")
+
+    def test_action_follows_the_running_model(self):
+        r = pm.pick("review", paths=AUTH_FILES, session="claude-opus-5-5")
+        self.assertEqual((r["tier"], r["action"]), ("opus", "run inline"))
+        r = pm.pick("review", paths=AUTH_FILES, session="haiku")
+        self.assertEqual(r["action"], "delegate")
+        r = pm.pick("build", paths=["docs/a.md"], session="opus")
+        self.assertEqual((r["tier"], r["action"]), ("haiku", "run inline"))
+        self.assertIn("subagent restarts cold", r["note"])
+        self.assertEqual(pm.parse_session(None), "sonnet")
+        self.assertEqual(pm.parse_session("Claude Mythos 5.1"), "fable")
+        with self.assertRaises(ValueError):
+            pm.parse_session("gpt-4")
+
+    def test_the_top_tier_is_never_picked(self):
+        for step in pm.STEPS:
+            for attempt in (1, 2):
+                for round_ in (1, 3):
+                    for paths in ([], AUTH_FILES, [f"f{i}.js" for i in range(9)]):
+                        self.assertNotEqual(pm.pick(step, paths, "Model: opus", 6, attempt, round_)["tier"], "fable")
+
+    def test_command_line(self):
+        script = os.path.join(SCRIPTS, "pick_model.py")
+        code, out, _ = run(script, "--step", "review", "--paths", *AUTH_FILES, "--session", "sonnet")
+        self.assertEqual((code, out["tier"], out["action"]), (0, "opus", "delegate"))
+        code, out, err = run(script, "--step", "plan", "--session", "gpt-4")
+        self.assertEqual(code, 2)
+        self.assertIn("unknown model", out["error"])
+        self.assertEqual(run(script, "--step", "nope")[0], 2)
+        proc = subprocess.run([sys.executable, "-B", script, "--step", "plan", "--text", "-"], input=FORM_REQUEST.format(
+            model="opus"), capture_output=True, text=True)
+        self.assertEqual(json.loads(proc.stdout)["tier"], "opus")
+        self.assertEqual(run(script, "--step", "plan", "--text", "/nonexistent/x.md")[0], 2)
+
+    def test_git_range(self):
+        d = tempfile.mkdtemp()
+        git = ["git", "-C", d, "-c", "user.name=t", "-c", "user.email=t@t"]
+        subprocess.run(git + ["init", "-q"], check=True)
+        with open(os.path.join(d, "a.txt"), "w") as f:
+            f.write("a\n")
+        subprocess.run(git + ["add", "."], check=True)
+        subprocess.run(git + ["commit", "-qm", "base"], check=True)
+        os.makedirs(os.path.join(d, "src"))
+        with open(os.path.join(d, "src", "auth.js"), "w") as f:
+            f.write("x\n")
+        subprocess.run(git + ["add", "."], check=True)
+        subprocess.run(git + ["commit", "-qm", "auth"], check=True)
+        script = os.path.join(SCRIPTS, "pick_model.py")
+        code, out, _ = run(script, "--step", "review", "--git-range", "HEAD~1..HEAD", "--session", "sonnet", cwd=d)
+        self.assertEqual((code, out["tier"], out["signals"]["risk_paths"]), (0, "opus", ["src/auth.js"]))
+        self.assertEqual(run(script, "--step", "review", "--git-range", "nosuchref..HEAD", cwd=d)[0], 2)
 
 
 if __name__ == "__main__":

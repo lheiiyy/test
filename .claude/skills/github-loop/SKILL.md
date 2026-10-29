@@ -1,6 +1,6 @@
 ---
 name: github-loop
-description: Coordinate Leo (Product Owner), Claude Cowork (Technical Lead) and Claude Code (Engineer) through GitHub Issues and pull requests, with no copy-paste relay. Autopilot mode runs plan with readiness check, one approval, build, independent review, fix, scripted merge, verify, deploy when authorized, and report. Use whenever Leo says "send to Code", "check the loop", "set up the loop", "autopilot", "plan then build" or "review the PR", or replies APPROVED, REVISE or CONTINUE on an issue. Also use it when an issue labeled to-code, awaiting-approval, to-review, reviewed or to-chat is in front of you, when a scheduled task fires for the loop, or when drafting an issue for Claude Code, even if "loop" is never said.
+description: Coordinate Leo (Product Owner), Claude Cowork (Technical Lead) and Claude Code (Engineer) through GitHub Issues and pull requests, with no copy-paste relay. Autopilot mode runs plan with readiness check, one approval, build, independent review, fix, scripted merge, verify, deploy when authorized, and report. Use whenever Leo says "send to Code", "check the loop", "set up the loop", "autopilot", "plan then build" or "review the PR", or replies APPROVED, REVISE or CONTINUE on an issue. Also use it when an issue labeled to-code, awaiting-approval, to-review, reviewed or to-chat is in front of you, when a scheduled task fires for the loop, or when drafting an issue for Claude Code, even if "loop" is never said. It also picks the right model for each step (sonnet by default, opus only on risk) and applies Leo's Model override.
 ---
 
 # github-loop
@@ -108,6 +108,15 @@ These are the caveman rules, written inline because scheduled runs load no plugi
 - Batch the checks. Do not retry the same failing approach without new evidence.
 - Never drop a security check or a test to save tokens.
 
+## Model routing
+
+Use the cheapest model that does the step reliably, and move up on risk, not on effort. Before each step run `python3 scripts/pick_model.py --step <plan|revise|build|fix|review|merge|verify|report> --session <this task's model> ...` (flags and the subagent brief are in `references/models.md`). It answers with a tier and `run inline` or `delegate`.
+- Merge and verify are scripted (haiku). Plan, revise and review start at sonnet and never go lower. Build and fix are sonnet.
+- Opus is for sensitive files (auth, permissions, schema, secrets, deploy, workflows), big changes, an architecture-heavy goal, the third review round, the second plan revision, and the second attempt at a failing fix. A fix escalates once, then parks.
+- `delegate` means hand the judgment to a subagent with that model, and keep the scripts, the checks and the posting in this session. A tier below the task's own runs inline.
+- Leo's `Model: opus|sonnet|haiku` line (or the Model field of the issue form) beats the script. The top tier, fable, only on his word.
+- Put one line `Model: <tier> (<reason>)` in each reply. Never claim a model that did not run. With no Agent tool, run inline and add a `Model note:`.
+
 ## Skills used when installed, with fallbacks
 
 | Need | Skill | Fallback |
@@ -129,4 +138,4 @@ Scheduled tasks start with no plugins (`enabled_plugins` is empty), so the fallb
 
 The scripts and references ship in the skill folder. In a repo, that folder is `.claude/skills/github-loop/`, and the repo's copy is the source of truth. If the copy you loaded lacks a script or reference named here (for example, an account copy saved from SKILL.md only), clone the repo and use its copy.
 
-Setup steps are in `references/setup.md`: labels, issue form, the two scheduled tasks, CI, release policy and the readiness check. If a step cannot finish, park with the step and the evidence. A run that "succeeded" only means the session ended, so check the labels and replies, not the run status.
+Setup steps are in `references/setup.md`: labels, issue form, the two scheduled tasks and their models, CI, release policy and the readiness check. If a step cannot finish, park with the step and the evidence. A run that "succeeded" only means the session ended, so check the labels and replies, not the run status.

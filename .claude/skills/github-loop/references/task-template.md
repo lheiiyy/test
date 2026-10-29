@@ -13,6 +13,8 @@ Take this automation from business plan to merged, tested code in two phases, wi
 - Stack: [STACK, e.g. Frontend → service/API layer → Google Apps Script → Google Sheets, kept migration-ready for a REST backend and database].
 - Users: [WHO USES IT]. Must work on desktop, tablet and phone.
 - Release policy: [no deploy | staging automatic | production after my CONTINUE: release].
+Model: auto
+(Leave "Model: auto" and the loop picks sonnet or opus per step by risk. Write `Model: opus`, `Model: sonnet` or `Model: haiku` on its own line only to force one.)
 - The repository is the source of truth. Read the existing docs first and don't re-read the whole codebase.
 
 ## Phase 1: Plan (do this first, then stop)
