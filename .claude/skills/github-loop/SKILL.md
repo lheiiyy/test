@@ -63,12 +63,11 @@ The first line of every agent comment:
 | `result` | code | phase=2 adds `pr` and the exact `head` |
 | `verdict` | lead | Names `pr`, `head` and `verdict`. Ends with `Reviewed head <sha>`, then `VERDICT: APPROVED` or `VERDICT: CHANGES REQUESTED`. |
 | `summary` | code | phase=2. Carries five report lines: Implemented and tested / Reviewed / Merged / Deployed / Blocked or unverified. |
-
-A plan, a phase 2 result, a verdict and a summary also carry one `Model: <tier>` line (see Model routing). The script refuses the reply without it.
-
 | `question` | either | Used by `park` |
 | `approval` | lead | Relays Leo's approval from a chat, quoting him. Never posted from a scheduled run. |
 | `task`, `result`, `status` | chat, code | Classic mode |
+
+A plan, a phase 2 result, a verdict and a summary also carry one `Model: <tier>` line (see Model routing). The script refuses the reply without it.
 
 ## Every run, both roles
 
