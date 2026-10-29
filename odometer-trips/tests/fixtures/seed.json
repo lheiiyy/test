@@ -1,0 +1,15 @@
+{
+  "vehicles": [
+    { "name": "Test Bike", "plate": "TEST-001", "fuel_type": "Gasoline", "start_odometer_km": 1000 }
+  ],
+  "trips": [
+    {
+      "vehicle_plate": "TEST-001",
+      "trip_date": "2026-01-05",
+      "start_km": 1000,
+      "end_km": 1012,
+      "purpose": "Work",
+      "destination": "Test Office"
+    }
+  ]
+}
