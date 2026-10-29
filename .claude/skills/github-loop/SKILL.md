@@ -1,11 +1,13 @@
 ---
 name: github-loop
-description: Hand coding tasks between Claude chat (planner) and Claude Code (executor) through GitHub Issues, with no manual copy-paste relay. Use this whenever Leo says "send to Code", "hand this to Claude Code", "check the loop", "set up the loop for repo X", or when an issue labeled to-code or to-chat is in front of you, or when a scheduled task fires on a GitHub issue event. Also use it when drafting an issue that Claude Code should pick up, even if the word "loop" is never said.
+description: Hand coding tasks between Claude chat (planner) and Claude Code (executor) through GitHub Issues, with no manual copy-paste relay, including an autopilot mode that goes from business plan to merged, tested code with one APPROVED comment from Leo. Use this whenever Leo says "send to Code", "hand this to Claude Code", "check the loop", "set up the loop for repo X", "autopilot", "plan then build", or replies APPROVED, REVISE or CONTINUE on an issue, or when an issue labeled to-code, awaiting-approval or to-chat is in front of you, or when a scheduled task fires on a GitHub issue event. Also use it when drafting an issue that Claude Code should pick up, even if the word "loop" is never said.
 ---
 
 # github-loop
 
 Two Claudes cannot talk to each other directly, but both can read and write GitHub Issues. This skill makes an issue the shared message thread, and labels the signal for whose turn it is. Claude Code can wake itself on a GitHub event. Claude chat cannot, so the return trip happens when Leo opens a chat and says "check the loop" (or a daily scheduled chat task does it). Be honest about that in every setup conversation: the automation ends at Claude Code's reply.
+
+**Two modes.** *Classic*: chat writes a task (Goal, Acceptance criteria) and the two sides trade replies. *Autopilot*: Leo files one request in the template format (`references/task-template.md`, or the Autopilot issue form), the executor posts a plan, Leo comments `APPROVED`, and the executor builds, tests, debugs, merges, updates the docs and closes the issue. Chat is not needed in autopilot. An issue is autopilot when its body has Phase 1 and Phase 2 headings. Full executor steps: `references/autopilot.md`.
 
 ## Decide your role first
 
@@ -19,8 +21,9 @@ Two Claudes cannot talk to each other directly, but both can read and write GitH
 |---|---|---|
 | `to-code` | planner or Leo | Ready for the executor. This label is the only trigger. |
 | `code-working` | executor | Claimed, so a second run does not start. |
-| `to-chat` | executor | Result or question waiting for the planner. |
-| `needs-leo` | either | A human must decide. Automation stops here. |
+| `to-chat` | executor | Result or question waiting for the planner (classic). |
+| `awaiting-approval` | executor | Autopilot plan posted; waiting for Leo's `APPROVED` or `REVISE:` comment. |
+| `needs-leo` | either | A human must decide. Classic stops here; autopilot resumes on Leo's `CONTINUE:` or `REVISE:` comment. |
 | `done` | either | Finished. Close the issue. |
 
 ## Message format
@@ -28,8 +31,10 @@ Two Claudes cannot talk to each other directly, but both can read and write GitH
 Every message the two sides post starts with a header line, so turns can be counted without guessing:
 
 ```
-<!-- loop:v1 from=chat|code type=task|status|result|question turn=N -->
+<!-- loop:v1 from=chat|code type=task|status|result|question|plan|summary [phase=1|2] turn=N -->
 ```
+
+The header is always the first line of an executor comment. Autopilot plans say `type=plan phase=1`, and the final report says `type=summary phase=2`.
 
 A task message then has these sections: `## Goal`, `## Context` (file paths and links, never pasted code), `## Acceptance criteria`, `## Constraints` (for example "single-file HTML", "Apps Script V8", "no new dependencies"). Clear acceptance criteria are what let the executor finish without asking, which is the whole point of unattended runs.
 
@@ -42,8 +47,8 @@ Three scripts do every deterministic step, so a run spends tokens only on the ac
    It lists open `to-code` issues, runs the guard on each, finds who applied the label, and flags stale claims. Read only its `summary` and the lists.
    - Exit code 2 or `TRIAGE FAILED` → say the triage failed and give the error. Never say "No new work." for a failure. Stop.
    - `summary` is `No new work.` → say exactly that and stop. Do not read anything else.
-2. **Park what needs a human.** For each `needs_leo` entry: `python scripts/loop_gh.py park --repo <o>/<r> --issue <N> --turn <next_turn> --reason "<its reason>"`. For each `stale` entry (a run stopped after claiming): same command with the reason "the previous run stopped after claiming this issue; re-apply to-code to retry".
-3. **Claim one issue** (one issue per run): take the first `work` entry, then `python scripts/loop_gh.py claim --repo <o>/<r> --issue <N>`. Exit code 3 means another run has it, so stop.
+2. **Park what needs a human.** For each `needs_leo` entry: `python scripts/loop_gh.py park --repo <o>/<r> --issue <N> --turn <next_turn> --reason "<its reason>"`, adding `--phase <phase>` for autopilot entries. For each `stale` entry (a run stopped after claiming): same command with the reason "the previous run stopped after claiming this issue; reply CONTINUE: to retry (or re-apply to-code in classic mode)".
+3. **Claim one issue** (one issue per run): take the first `work` entry. **If it has a `work_type`, follow `references/autopilot.md` instead of steps 4 to 7.** Otherwise `python scripts/loop_gh.py claim --repo <o>/<r> --issue <N>`. Exit code 3 means another run has it, so stop.
 4. Do the work. Read only the files the issue names. Work on a `claude/` branch and open a PR. Never push to `main`, never edit `.github/workflows` unless the task says so.
 5. If the task turns out to be ambiguous or blocked, stop and ask with `loop_gh.py park --reason "<all questions in one batch>"`. A wrong guess costs more tokens than a question.
 6. Write `reply.md`: the entry's `reply_header` line, then at most 150 words: what changed, the PR or branch link, how it was checked, open questions.
@@ -59,7 +64,8 @@ Cloud sessions block GraphQL, so `gh issue view`, `gh issue edit` and `gh pr cre
 ## Planner procedure
 
 - **Hand off a task:** draft the issue with the header (`from=chat type=task turn=1`) and all four sections. If a write-capable GitHub connector works, create it with the `to-code` label. Otherwise give Leo the text to paste into GitHub's New issue page, and tell him the one extra step: add the `to-code` label. Do not pretend the handoff happened if the write did not succeed.
-- **Check the loop:** list open issues labeled `to-chat`, summarise each in two lines, then either post a follow-up task (turn = last turn + 1, and re-apply `to-code`) or ask Leo what he wants. Stop when the thread is at the turn cap.
+- **Check the loop:** list open issues labeled `to-chat`, summarise each in two lines, then either post a follow-up task (turn = last turn + 1, and re-apply `to-code`) or ask Leo what he wants. Stop when the thread is at the turn cap. Also list `awaiting-approval` issues and remind Leo that one `APPROVED` comment starts the build.
+- **Autopilot request:** fill `references/task-template.md` with Leo's goal, project, repo, stack, users and feature name, and give it to him for the Autopilot issue form or a new issue with `to-code`. Never comment `APPROVED` for him: approval is Leo's own action.
 
 ## Loop guards (why each exists)
 
@@ -71,7 +77,10 @@ Cloud sessions block GraphQL, so `gh issue view`, `gh issue edit` and `gh pr cre
 - **One run per label event, one reply per run.**
 - **Stale claims are surfaced, not hidden.** If a run crashes after claiming, the issue would sit on `code-working` forever. `triage.py` reports any claim older than 90 minutes and the next run parks it on `needs-leo`.
 - **A failed check is never "No new work."** `triage.py` exits 2 with an error, so a broken token or network cannot look like an empty queue.
-- **`loop_gh.py` cannot add `to-code`.** The hand-off labels it can add are only `to-chat`, `needs-leo` and `done`.
+- **`loop_gh.py` cannot add `to-code`.** The labels it can add are only `code-working`, `to-chat`, `awaiting-approval`, `needs-leo` and `done`.
+- **Autopilot keywords count only from the owner,** at the very start of a comment, in capitals, and after the executor's latest reply. Executor comments start with the header, so the executor can never approve itself.
+- **Merging is scripted.** `loop_gh.py merge` merges only when the owner's `APPROVED` follows the latest plan, and only a clean, open, non-draft `claude/` PR, with the head SHA pinned. A `REVISE:` after approval or a newer plan withdraws the approval.
+- **Autopilot brakes:** 10 executor replies per issue, 3 plan revisions, and a 180-minute stale limit for builds. Phase 1 changes only the plan file (`check_plan.py`).
 
 ## Token rules (Leo is on a limited Pro plan)
 

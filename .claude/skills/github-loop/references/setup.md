@@ -18,9 +18,16 @@ Uses the Pro subscription, no API key, no YAML, no terminal.
 
 The GitHub-event trigger can only be created in the claude.ai UI, and it needs the Claude GitHub App. A cron scheduled task needs neither, and can be made from chat with the scheduled-task tools:
 - **Hourly check:** a scheduled task that runs `scripts/triage.py` and ends with "No new work." when nothing is waiting. The script does the listing, the guard, the label-actor check and stale-claim detection, so an idle run is one command. Leo's TLMI-AI tasks run hourly with the same shape and succeed, so the "5 runs a day on Pro" limit from the launch post does not appear to be enforced. Suggested prompt, short on purpose:
-  > Clone `<owner>/<repo>`. Run `export PYTHONDONTWRITEBYTECODE=1`, then `python .claude/skills/github-loop/scripts/triage.py --repo <owner>/<repo> --owner <owner>` from the repo root. If the summary is "No new work.", reply with exactly that and stop. If triage fails, say so and stop. Otherwise follow `.claude/skills/github-loop/SKILL.md` (executor procedure, steps 2 to 7) for the first `work` entry. Never merge, never push to `main`, never add `to-code`. Final message: one line in Taglish.
+  > Clone `<owner>/<repo>`. Run `export PYTHONDONTWRITEBYTECODE=1`, then `python .claude/skills/github-loop/scripts/triage.py --repo <owner>/<repo> --owner <owner>` from the repo root. If the summary is "No new work.", reply with exactly that and stop. If triage fails, say so and stop. Otherwise follow `.claude/skills/github-loop/SKILL.md` (executor procedure, from step 2) for the first `work` entry; if it has a `work_type`, follow `.claude/skills/github-loop/references/autopilot.md`. Merge only with `scripts/loop_gh.py merge`, which checks the owner's APPROVED comment. Never push to `main`, never force-push, never add `to-code`. Final message: one line in Taglish.
 - **Poke-only:** a scheduled task with no schedule at all, started by `fire_trigger` right after the planner creates the issue. It costs nothing while idle, but a label added by hand in the GitHub app does not wake it.
 - Use REST (`gh api`) everywhere; GraphQL is blocked in cloud sessions.
+
+## Autopilot setup (once per repo)
+
+1. **Create the label** `awaiting-approval` (color `5319E7`), next to the five above.
+2. **Add the issue form** `.github/ISSUE_TEMPLATE/autopilot.yml` (copy it from `lheiiyy/test`). It files Leo's template with `to-code` already applied, so a request is one form in the GitHub web UI.
+3. **Use the hourly scheduled task** above. It already routes autopilot work.
+4. **Expect two touches from Leo per feature:** file the request, then comment `APPROVED` on the plan. If a permission rule blocks the scripted merge, the executor parks and asks for one Merge tap, then `CONTINUE: merged`.
 
 ## Optional: return path from chat
 
