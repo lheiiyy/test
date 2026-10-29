@@ -42,4 +42,11 @@ Issue #3. First live test of github-loop autopilot.
 - **Method:** merge commit.
 - **Conditions:** Leo's `APPROVED` comment follows this plan; tests pass with output in the PR body; PR is open, not a draft, and mergeable; only `odometer-trips/` files changed. Merge via `scripts/loop_gh.py merge` only.
 
-AWAITING APPROVAL
+## Status
+
+- **Status:** built, tested; merging `claude/readme` into `main` with a merge commit (PR #6).
+- **Decisions:** title `# Odometer Trip Log`; sentence as approved in the plan reply; test uses Node's built-in `node:test` (Node 22, no dependencies).
+- **Test results:** `node --test odometer-trips/tests/readme.test.mjs` → tests 3, pass 3, fail 0, exit 0. Negative check: with the README reduced to a wrong title, 2 of 3 tests fail as expected.
+- **Diff scope:** only files under `odometer-trips/` changed.
+
+APPROVED by lheiiyy on 2026-10-29
