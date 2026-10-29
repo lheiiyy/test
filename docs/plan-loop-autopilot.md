@@ -1,6 +1,6 @@
 # Plan: github-loop autopilot
 
-Repo `lheiiyy/test` · written 2026-10-29 · Phase 1 only: no code changed.
+Repo `lheiiyy/test` · written and approved 2026-10-29 · built in PR #5 · status at the end.
 
 **Objective:** make the github-loop skill take one GitHub issue from business plan to merged, tested code, where Leo's only action after the request is one `APPROVED` comment.
 
@@ -136,4 +136,24 @@ needs-leo + owner "CONTINUE: ..." --> resume the parked phase
 
 **Assumptions accepted by approving:** merge commit; reply cap 10 and revision cap 3; build stale threshold of 180 minutes; keywords in capitals at the start of a comment; plan path `<project folder>/docs/plan-<feature>.md`.
 
-AWAITING APPROVAL
+## Status (2026-10-29)
+
+**Status.** Tasks 0-6 are built and tested on `claude/loop-autopilot` and merged to `main` through PR #5 (merge commit). PR #4 was merged first (task 0). Tasks 7 (scheduled task) and 8 (live test) follow the merge, because the scheduled task reads `main`.
+
+**Test results**
+- 57 unit tests pass (`python3 -B evals/test_scripts.py`): guard 21, triage 14, loop_gh 16, check_plan 6.
+- The live read-only triage on this repo returns "No new work."
+- `loop_gh.py merge` on issue #3 refuses with exit 4 (no plan, so no approval).
+- This plan passes `check_plan.py`, and its Phase 1 diff is this file only.
+- quick_validate reports "Skill is valid!". The package has 9 files, with evals excluded.
+
+**Decisions made while building**
+- The executor posts from the owner's account (`lheiiyy`). So an executor reply counts only when its first line is a `from=code` header, and `check_reply.py` now requires the header there. This is what stops self-approval.
+- Plan PRs are normal PRs, not drafts. REST cannot mark a draft ready (that needs GraphQL, which cloud sessions block), and a draft cannot be merged.
+- If a permission rule blocks the merge, the executor parks on `needs-leo` with the PR link and resumes on `CONTINUE: merged`. This reuses existing labels instead of adding `ready-to-merge`, and still costs one tap.
+- Phase headings are accepted at `##` or `###`, because the issue form renders its fields as `###`.
+- `Approved` and `approved` do not count, per the approved assumption of capitals only.
+- Tests live in `.claude/skills/github-loop/evals/test_scripts.py`. The packaged skill excludes them.
+- The issue form was checked against the documented keys and by running its rendered body through the guard. Submitting it in a browser is still to be tried.
+
+APPROVED by lheiiyy on 2026-10-29
