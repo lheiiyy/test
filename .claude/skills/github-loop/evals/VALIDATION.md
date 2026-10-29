@@ -7,7 +7,7 @@ Branch `claude/github-loop-rework`, based on `main` at `ee8de02` (PR #11). Every
 | Command | Result |
 |---|---|
 | `python3 -B evals/test_scripts.py` on `main` before any change | 112 run, 112 OK |
-| `python3 -B evals/test_scripts.py` on this branch | 179 run, 179 OK (67 new; where an approved decision changed a rule, existing fixtures and three test bodies were updated, listed below) |
+| `python3 -B evals/test_scripts.py` on this branch | 181 run, 181 OK (69 new; where an approved decision changed a rule, existing fixtures and three test bodies were updated, listed below) |
 | 27 hand-made mutations of the new rules, each run against its test class | 26 caught. The survivor (dropping `evals` from `package.py`'s skip list) is equivalent: `evals/` is never walked |
 | `ast.parse` of every script | all parse |
 | `flake8 --max-line-length=120 scripts/` | 17 findings (18 on `main`); pyflakes (`--select F`) on scripts and tests: 0 |
@@ -38,7 +38,7 @@ Branch `claude/github-loop-rework`, based on `main` at `ee8de02` (PR #11). Every
 | Approval tied to the latest plan and authorized scope | Partly | Latest plan and REVISE rules are enforced. A file-scope check at merge is not built: D4 b keeps approval with no scope limit; the Lead's review checklist covers "only files the plan lists". Decision below |
 | No merge without authorization and checks | Complete | `MergeTests`, `MergeGateRuleTests` (fork, PR link, CI line, high risk exit 8, incomplete file list, refused merge call) |
 | No close before a verified merge | Complete | `FinishRuleTests` (open PR → exit 7; `No PR: yes` only by the issue) |
-| Automated regression suite, real results | Complete | 179 tests, results above |
+| Automated regression suite, real results | Complete | 181 tests, results above |
 | Pagination, concurrency, retry, API failures | Complete except concurrency | Paging and retries: `ReliabilityTests`. The claim stays best effort (GitHub has no atomic label claim); documented in loop_gh.py, setup.md and here |
 | Self-improvement evidence-based, reversible, approval-gated | Complete (recommend only) | `OutcomeTests`: 3-issue threshold, guarded areas flagged, tampered records rejected, off switch, no file changed. Not called self-improving: nothing is applied automatically |
 | Token efficiency measured, not asserted | Partly | Instruction size measured (below). Real token use per run is not exposed to the scripts, so it stays unmeasured |

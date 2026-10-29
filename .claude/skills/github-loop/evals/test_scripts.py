@@ -1619,6 +1619,36 @@ class PostPlanRuleTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertTrue(any("app.js" in p for p in out["problems"]))
 
+    def test_new_commits_on_the_base_do_not_count_as_plan_changes(self):
+        d = tempfile.mkdtemp()
+        git = ["git", "-C", d, "-c", "user.name=t", "-c", "user.email=t@t"]
+        subprocess.run(git + ["init", "-q", "-b", "main"], check=True)
+        with open(os.path.join(d, "README.txt"), "w") as f:
+            f.write("base\n")
+        subprocess.run(git + ["add", "."], check=True)
+        subprocess.run(git + ["commit", "-qm", "base"], check=True)
+        subprocess.run(git + ["checkout", "-qb", "claude/readme"], check=True)
+        os.makedirs(os.path.join(d, "docs"))
+        plan = os.path.join(d, "docs", "plan-readme.md")
+        with open(plan, "w") as f:
+            f.write(GOOD_PLAN)
+        subprocess.run(git + ["add", "."], check=True)
+        subprocess.run(git + ["commit", "-qm", "plan"], check=True)
+        subprocess.run(git + ["checkout", "-q", "main"], check=True)
+        with open(os.path.join(d, "other.js"), "w") as f:
+            f.write("someone else's change\n")
+        subprocess.run(git + ["add", "."], check=True)
+        subprocess.run(git + ["commit", "-qm", "main moved"], check=True)
+        subprocess.run(git + ["checkout", "-q", "claude/readme"], check=True)
+        proc = subprocess.run([sys.executable, "-B", os.path.join(SCRIPTS, "check_plan.py"), plan, "--git-base", "main"],
+                              capture_output=True, text=True, cwd=d)
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+
+    def test_every_command_accepts_session(self):
+        code, out, _ = run(os.path.join(SCRIPTS, "loop_gh.py"), "park", "--repo", "o/r", "--issue", "3", "--turn", "4",
+                           "--reason", "x", "--session", "sonnet", "--dry-run")
+        self.assertEqual(code, 0, out)
+
 
 class ReliabilityTests(unittest.TestCase):
     def triage(self, mode, *flags, path=None):

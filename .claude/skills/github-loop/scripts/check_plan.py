@@ -70,8 +70,12 @@ def changed_files_from_git(base):
             raise RuntimeError(f"git {' '.join(args)} failed: {proc.stderr.strip()[:200]}")
         return proc.stdout
     top = git("rev-parse", "--show-toplevel").strip()
-    names = set(git("diff", "--name-only", base).split()) | set(git("ls-files", "--others", "--exclude-standard",
-                                                                      "--full-name", top).split())
+    # Compare with the point where the branch left the base, so new commits on the base never count as changes
+    # of this branch (the working tree is compared, so uncommitted edits count too).
+    fork_point = git("merge-base", base, "HEAD").strip()
+    changed = git("diff", "--name-only", fork_point).split()
+    untracked = git("ls-files", "--others", "--exclude-standard", "--full-name", top).split()
+    names = set(changed) | set(untracked)
     return top, sorted(names)
 
 

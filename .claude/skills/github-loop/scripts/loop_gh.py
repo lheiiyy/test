@@ -476,10 +476,11 @@ def parser():
         p.add_argument("--dry-run", action="store_true")
         p.add_argument("--fixtures", default=None)
         p.add_argument("--config", default=None, help="settings file (default .github/github-loop.json)")
+        p.add_argument("--session", default=None, help="the model this task runs on (checks a reply's Model line; "
+                                                       "accepted and unused by commands that post none)")
         if name in ("reply", "post-plan", "ready-for-review", "verdict", "finish"):
             p.add_argument("--file", required=True)
             p.add_argument("--turn", type=int, required=True)
-            p.add_argument("--session", default=None, help="the model this task runs on (checks the Model line)")
         if name in ("ready-for-review", "verdict", "merge", "verify"):
             p.add_argument("--pr", type=int, required=True)
         if name == "finish":
