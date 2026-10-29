@@ -16,6 +16,11 @@ GitHub is the shared source of truth. Issues carry requests and hand-offs, pull 
 | **Code**, Claude Code (Engineer) | Branches, code, tests, PRs, fixes, the scripted merge, post-merge checks, authorized deploys, the report | The hourly Code scheduled task (`--role code`). Steps: `references/autopilot.md` |
 | **GitHub** | The record: issues, PRs, commits, checks, verdicts | The `gh api` REST calls in `scripts/` |
 
+**Decide your role first:**
+- In a chat with Leo → you are the Lead.
+- In a scheduled run → the role is the one in the task prompt.
+- Asked to set up the loop → read `references/setup.md` and walk Leo through it one step at a time. Every step must work from a tablet browser.
+
 - Approving the plan authorizes the routine work in its scope, including the merge.
 - It never overrides platform permissions, repository rules or security controls.
 - Self-review is not review: the Lead reviews from a different session than the one that built.
@@ -63,6 +68,9 @@ The first line of every agent comment:
 ## Every run, both roles
 
 Run the scripts from the skill folder (`.claude/skills/github-loop/` in a repo) after `export PYTHONDONTWRITEBYTECODE=1`. Use REST (`gh api`) only, because GraphQL and `gh pr create` fail in cloud sessions.
+- Open a PR: `gh api -X POST repos/<o>/<r>/pulls -f title=... -f head=claude/... -f base=main -F body=@pr.md`. Never open a draft, because REST cannot mark it ready.
+- Add `--dry-run` to any `loop_gh.py` command to see its calls without sending them.
+- Never report a hand-off that did not succeed.
 
 1. **Triage:** `python scripts/triage.py --repo <o>/<r> --owner <owner> --role <code|lead>`.
    - `No new work.` → say exactly that and stop.
