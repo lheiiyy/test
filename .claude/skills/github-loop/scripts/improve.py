@@ -36,6 +36,8 @@ PARK_ADVICE = {
                           "the project's tests to the CI workflow."),
     "not_mergeable": ("process", "PRs are not mergeable at merge time. Merge origin/main into the branch before "
                                  "ready-for-review."),
+    "out_of_scope": ("requirements", "PRs change files outside the plan's scope. List every folder the tasks "
+                                     "touch on the plan's Files in scope line, or ask for a REVISE: before building."),
     "cap": ("process", "Threads hit a cap. Split requests into smaller ones (six tasks or fewer)."),
     "fix_failed": ("process", "Fixes fail twice. Add the failing case as a test before fixing, and reproduce it "
                               "first (qa expert note)."),

@@ -35,7 +35,7 @@ Branch `claude/github-loop-rework`, based on `main` at `ee8de02` (PR #11). Every
 | Existing behavior preserved or changes documented | Complete | 112 original tests pass (fixtures and three test bodies updated as listed); CHANGELOG.md lists every behavior change |
 | Routing chooses relevant expertise, not every expert | Complete | `RouterTests`: docs-only → 1 expert; auth → security, backend, qa |
 | Approval and security controls cannot be bypassed by routing | Complete | Routing only adds gates; the merge gate computes risk itself from the PR's file list (`test_a_declared_low_risk_cannot_lower_a_sensitive_change`) |
-| Approval tied to the latest plan and authorized scope | Partly | Latest plan and REVISE rules are enforced. A file-scope check at merge is not built: D4 b keeps approval with no scope limit; the Lead's review checklist covers "only files the plan lists". Decision below |
+| Approval tied to the latest plan and authorized scope | Complete (after D4 a) | Latest plan and REVISE rules are enforced; since the D4 a follow-up, a changed file outside the plan's `Files in scope:` makes `merge` exit 9 for the owner (`ScopeTests`) |
 | No merge without authorization and checks | Complete | `MergeTests`, `MergeGateRuleTests` (fork, PR link, CI line, high risk exit 8, incomplete file list, refused merge call) |
 | No close before a verified merge | Complete | `FinishRuleTests` (open PR → exit 7; `No PR: yes` only by the issue) |
 | Automated regression suite, real results | Complete | 181 tests, results above |
@@ -64,7 +64,7 @@ SKILL.md went from 14,619 to 10,664 characters; classic mode and recovery moved 
 
 ## Untested or unverified
 
-- A full live loop with the new rules (plan → approval → build → review → merge) was not run; the scheduled tasks still use the old prompts until the owner updates them.
+- A full live loop with the new rules (plan → approval → build → review → merge) was not run. Since 2026-10-29 both scheduled tasks run on Sonnet and pass `--session sonnet`.
 - Two runs claiming the same issue in the same second (no atomic claim exists).
 - Whether a scheduled cloud run can start subagents (unchanged from before: UNVERIFIED).
 - Branch protection on `main` (the token cannot read it) and GitHub Pages.
@@ -76,8 +76,17 @@ SKILL.md went from 14,619 to 10,664 characters; classic mode and recovery moved 
 - **Relayed approval and in-chat MERGE:** a script cannot tell a chat from a scheduled run; the quote rules make misuse visible (the quote is in the summary or the merge commit) but do not prevent it.
 - **Review independence:** a verdict is checked for head and PR, not for which session wrote it.
 
-## Decisions still required from the owner
+## Owner decisions after PR #12 (2026-10-29)
 
-1. **Scope check at merge:** keep D4 b as is (no file-scope check), or add a `Scope:` line to plans and park a PR that changes files outside it (unless a `CONTINUE:` widened it).
-2. **Scheduled tasks:** the Code task runs on Opus, the Lead task on Sonnet, and neither prompt passes `--session`. Move Code to Sonnet and add `--session` (setup.md has the updated prompts)?
-3. **Account copy of the skill:** the installed copy still has the first version's scripts. Upload the packaged zip (or the merged repo folder) to replace it.
+1. **PR #12 merged** on Leo's words in chat ("Merge or 12"), with the head pinned at `941478c` and his words in the merge commit message (`5a675e9`). `verify` reported `on_base: true`.
+2. **D4 changed to a:** built on branch `claude/github-loop-scope` (follow-up below).
+3. **Scheduled tasks:** the Code task moved from Opus to Sonnet; both prompts now pass `--session sonnet` and name the new merge and finish rules.
+4. **Account copy of the skill:** Leo uploaded the packaged zip from PR #12 (identical SHA-256 to the one built here). Re-upload the zip from the follow-up after it merges.
+
+## Follow-up: D4 a (scope check at merge)
+
+| Command | Result |
+|---|---|
+| `python3 -B evals/test_scripts.py` | 187 run, 187 OK (6 new `ScopeTests`; plan fixtures gained a `Files in scope:` line) |
+| 6 hand-made mutations of the scope rules | 5 caught on the first run; the survivor (ignoring a missing scope line) led to two more assertions, and then it was caught too |
+| `flake8 --select F` on scripts and tests | 0 |

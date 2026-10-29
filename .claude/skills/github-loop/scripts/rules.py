@@ -10,6 +10,7 @@ data, database schema and migrations, payments, production config and deploys, `
 setup are the loop's safety controls). Sensitive data and destructive operations cannot be seen in
 a file name, so the plan's `Risk:` line covers them; it can raise the tier, never lower it.
 """
+import fnmatch
 import re
 
 DOCS = re.compile(r"\.(md|txt|rst)$", re.I)
@@ -24,6 +25,9 @@ RISK_TEXT = re.compile(
 ARCHITECTURE = re.compile(
     r"(new system|new project|from scratch|architecture|rewrite|redesign|rebuild|platform|re-platform)", re.I)
 RISK_LINE = re.compile(r"(?im)^[ \t>*-]*risk[ \t]*:[ \t]*\**[ \t]*(low|normal|high)\b")
+# Bold markers are allowed around the label ("**Files in scope:**"), never eaten from the patterns themselves.
+SCOPE_LINE = re.compile(r"(?im)^[ \t>*-]*(?:\*\*)?files in scope(?:\*\*)?[ \t]*:(?:\*\*)?[ \t]*(.*)$")
+TOO_BROAD = {"*", "**", "/", ".", "./", "**/*", "*/**"}
 TIERS = ("low", "normal", "high")
 
 
@@ -62,3 +66,46 @@ def risk_tier(paths=(), declared=None):
     if declared in TIERS and TIERS.index(declared) > TIERS.index(tier):
         tier, reasons = declared, reasons + [f"the plan declares Risk: {declared}"]
     return tier, reasons
+
+
+def declared_scope(text):
+    """The patterns on a `Files in scope: a/, b/**, docs/plan-x.md` line, or None when there is no such line.
+    Patterns are separated by commas or spaces; backticks are ignored."""
+    m = SCOPE_LINE.search(text or "")
+    if not m:
+        return None
+    return [p for p in re.split(r"[,\s]+", m.group(1).replace("`", "")) if p]
+
+
+def scope_problems(patterns):
+    """Why a declared scope cannot be used: missing, empty, or so broad that it checks nothing."""
+    if patterns is None:
+        return ["declare the files the plan may change on one line: `Files in scope: <folder/>, <file>, ...`"]
+    if not patterns:
+        return ["`Files in scope:` lists no files or folders"]
+    broad = [p for p in patterns if p in TOO_BROAD]
+    if broad:
+        return [f"`Files in scope:` must name real folders or files, not {', '.join(broad)}"]
+    return []
+
+
+def in_scope(path, patterns):
+    """`dir/` and `dir/**` cover everything under dir; `*`, `?` and `[...]` are globs; anything else is one file."""
+    path = norm([path])[0]
+    for raw in patterns:
+        p = norm([raw])[0]
+        if p.endswith("/**"):
+            p = p[:-2]
+        if p.endswith("/"):
+            if path.startswith(p):
+                return True
+        elif any(ch in p for ch in "*?["):
+            if fnmatch.fnmatchcase(path, p):
+                return True
+        elif path == p:
+            return True
+    return False
+
+
+def outside_scope(paths, patterns):
+    return [p for p in norm(paths) if not in_scope(p, patterns)]

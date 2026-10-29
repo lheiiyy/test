@@ -17,7 +17,7 @@ For `continue`, read the last park comment first. If it parked a merge ("Merge n
 
 1. Check out `claude/<slug>`, the plan PR's branch. If `main` moved, merge `origin/main` into it with a merge commit. Never rebase or force-push.
    **Route the step:** `python3 scripts/route.py --step <build|fix> --paths <the files the plan lists> --tasks <n> --text <issue body file> --session <this task's model>` (for a fix, use `--git-range origin/main...HEAD --round <n>` instead of `--paths`). Read only the expert notes it lists. On `delegate`, a subagent with that model makes the edits and runs the tests in the checkout; you commit (one commit per task), push and post (`references/models.md`). Otherwise work inline.
-2. **Build:** implement the plan's tasks in order, one commit per task (`T<n>: <task>`), and push after each commit.
+2. **Build:** implement the plan's tasks in order, one commit per task (`T<n>: <task>`), and push after each commit. Change only files inside the plan's `Files in scope:` line. A task that needs another file is a stop-and-ask item; a `CONTINUE:` that asks for more files still leaves the merge to the owner.
    **Fix:** fix every `[BLOCKER]` and `[MAJOR]` in the latest verdict, and fix or answer each `[MINOR]` and `[NIT]`. Never weaken or skip a test.
    **Continue:** apply the answer in the entry's `notes`.
 3. **Test** as the test plan says, and keep the output. On Node 22, `node --test <folder>` fails: pass a glob such as `node --test 'dir/*.test.mjs'`. Playwright and Chromium are preinstalled in scheduled runs (`require('playwright')`), so a browser check needs no install. **Debug:** find the root cause before fixing, and fix the cause, not the symptom. Attempt 1 runs on the tier from the step above. If the same error survives it, run `route.py --step fix --attempt 2 ...`, which escalates to opus, for attempt 2. If the error survives that too, park.
@@ -30,7 +30,7 @@ For `continue`, read the last park comment first. If it parked a merge ("Merge n
 
 1. Run `python scripts/loop_gh.py merge --repo <o>/<r> --issue <N> --pr <P> --method <the plan's method>`. It reads the plan's `Risk:` and `CI required:` lines itself.
    - Exit code 4, 5 or 6: park with the reason it gives (`--phase 2`).
-   - Exit code 8 (high risk, every other gate green): park with "High-risk PR ready: <PR link>. Tap Merge, then reply CONTINUE: merged (or say MERGE in a chat with the Lead)". Never merge it yourself.
+   - Exit code 8 (high risk) or 9 (files outside the plan's scope), every other gate green: park with "<the problem it gives>. PR ready: <PR link>. Tap Merge, then reply CONTINUE: merged (or say MERGE in a chat with the Lead), or reply REVISE: to widen the plan". Never merge it yourself.
    - If a permission rule refuses the command itself: park with the reason "Merge needs one tap from you: <PR link>. Tap Merge, then reply CONTINUE: merged". Never work around a refusal. On the next `continue`, if the PR is already merged, go straight to step 2.
 2. Run `python scripts/loop_gh.py verify --repo <o>/<r> --issue <N> --pr <P>`. It must report `on_base: true`. Note the post-merge checks it lists.
 3. **Deploy only as the plan's release policy says.**
@@ -75,5 +75,5 @@ For `continue`, read the last park comment first. If it parked a merge ("Merge n
 |---|---|
 | `APPROVED` | Approves the latest plan (Code builds; the Lead reviews; Code merges unless it is high risk) |
 | `REVISE: <notes>` | The Lead rewrites the plan (up to 3 times); any earlier `APPROVED` no longer counts |
-| `CONTINUE: <answer>` | Resumes the parked phase with the answer; the approval still stands |
-| `MERGE ...` (in a chat with the Lead) | Merges a high-risk PR that the gate parked with exit 8 |
+| `CONTINUE: <answer>` | Resumes the parked phase with the answer; the approval still stands, but files outside the plan's scope still wait for the owner at the merge |
+| `MERGE ...` (in a chat with the Lead) | Merges a PR that the gate parked with exit 8 (high risk) or 9 (outside the scope) |

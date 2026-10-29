@@ -14,8 +14,10 @@ Checks:
   checks and the responsible agent; the merge plan names the branch, the method and
   the release policy (deploy or no deploy); the readiness section uses the statuses
   READY, NEEDS SETUP, BLOCKED, NOT REQUIRED or UNVERIFIED;
-- the merge plan declares `Risk: low|normal|high` and `CI required: yes|no` on their own lines
-  (the plan reply repeats them, and the merge gate reads them: high risk means the owner merges);
+- the merge plan declares `Risk: low|normal|high`, `CI required: yes|no` and
+  `Files in scope: <folders/ and files>` on their own lines (the plan reply repeats them, and the
+  merge gate reads them: high risk, or a changed file outside the scope, means the owner merges);
+  with --git-base or --changed, the scope must cover the plan file itself;
 - the last non-empty line is exactly AWAITING APPROVAL;
 - with --git-base or --changed: the plan is the only changed file, because
   Phase 1 makes no code changes.
@@ -28,6 +30,9 @@ import os
 import re
 import subprocess
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from rules import declared_scope, in_scope, scope_problems  # noqa: E402
 
 SECTIONS = ["Business plan", "Architecture", "Task breakdown", "Test plan", "Merge plan", "Readiness"]
 TOPICS = {
@@ -97,6 +102,10 @@ def check(text, plan_rel=None, changed=None):
                     problems.append("Merge plan needs a line `Risk: low|normal|high` (high: the owner merges)")
                 if not CI_LINE.search(body[name]):
                     problems.append("Merge plan needs a line `CI required: yes|no`")
+                scope = declared_scope(body[name])
+                problems += [f"Merge plan: {p}" for p in scope_problems(scope)]
+                if changed is not None and scope and not in_scope(plan_rel, scope):
+                    problems.append(f"Merge plan: `Files in scope:` must include the plan file {plan_rel}")
             if name == "Task breakdown" and not TIERS.search(body[name]):
                 problems.append("Task breakdown has no model plan: name a tier (haiku, sonnet or opus) per step, "
                                 "from scripts/pick_model.py")

@@ -2,6 +2,11 @@
 
 Each adopted change is its own PR with one line here. After its PR is merged, tag the merge commit `github-loop-<date>` (for example `github-loop-2026-10-29`), so the runbook can roll back to it.
 
+## 2026-10-29 (later): D4 changed to a
+
+- Plans and plan replies carry `Files in scope: <folders/ and files>`; `*` and similar are refused, and the scope must cover the plan file. A `CONTINUE:` still keeps the approval, but `merge` exits 9 when a changed file is outside the scope (or the plan declares none), so the owner decides: `REVISE:`, a Merge tap, or `MERGE ...` in a chat session (which covers exit 8 and 9 together).
+- outcomes.py has an `out_of_scope` park category, and improve.py advises on it.
+
 ## 2026-10-29: rework from the handoff
 
 - Approval rules (owner decisions D4 b, D5 a, D6 b): a `REVISE:` after the latest plan cancels every approval until a revised plan is posted; `CONTINUE:` keeps it; loose `APPROVED ...` wording still counts.

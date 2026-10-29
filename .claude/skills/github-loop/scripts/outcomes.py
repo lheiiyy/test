@@ -35,6 +35,7 @@ PARK_CATEGORIES = [
     ("stalled", r"\bNo (code|lead) run picked up"),
     ("merge_tap", r"Merge needs one tap"),
     ("release", r"Ready to release"),
+    ("out_of_scope", r"outside the plan's scope|outside the approved scope|Files in scope"),
     ("high_risk", r"high-risk"),
     ("not_approved", r"not merging: (no owner APPROVED|the owner asked)"),
     ("checks", r"checks not green|requires CI"),

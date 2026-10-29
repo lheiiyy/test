@@ -12,6 +12,7 @@ Each fix keeps the GitHub record readable by the scripts. Never edit or delete a
 | `merge` exit 5 | Draft, conflicts, fork, wrong branch or base, or an incomplete file list | Fix the branch (merge `origin/main` into it), then re-run; a fork PR is never merged. |
 | `merge` exit 6 | A check failed or is pending, or CI is required and none ran | Fix the cause or wait for the check; never merge around it. |
 | `merge` exit 8 | High risk: the owner merges | Park with "High-risk PR ready: tap Merge, then reply CONTINUE: merged", or the owner says `MERGE ...` in a chat session and the session runs `merge --owner-merge-quote "<the owner's words>"`. |
+| `merge` exit 9 | A changed file is outside the plan's `Files in scope:` (or the plan has no such line) | Park with the files it names. The owner replies `REVISE:` to widen the plan, taps Merge, or says `MERGE ...` in a chat session. |
 | A merged change is wrong | Bad merge | Open the PR on GitHub and use **Revert**; that opens a revert PR. File a new request for the real fix. |
 | The skill itself misbehaves | A bad skill version | Roll back: open a PR that restores `.claude/skills/github-loop/` from the last good tag (`git checkout <tag> -- .claude/skills/github-loop`). Tags are named `github-loop-<date>`, one per `CHANGELOG.md` entry. |
 | Triage says `TRIAGE FAILED` | Token, network or `gh` problem | Read the error; a failure is never an idle queue. Fix access, then let the next run continue. |
