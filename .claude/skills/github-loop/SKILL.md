@@ -119,4 +119,6 @@ Scheduled tasks start with no plugins (`enabled_plugins` is empty), so the fallb
 
 ## Setup and failures
 
+The scripts and references ship in the skill folder. In a repo, that folder is `.claude/skills/github-loop/`, and the repo's copy is the source of truth. If the copy you loaded lacks a script or reference named here (for example, an account copy saved from SKILL.md only), clone the repo and use its copy.
+
 Setup steps are in `references/setup.md`: labels, issue form, the two scheduled tasks, CI, release policy and the readiness check. If a step cannot finish, park with the step and the evidence. A run that "succeeded" only means the session ended, so check the labels and replies, not the run status.
