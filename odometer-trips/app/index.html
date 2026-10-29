@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Odometer Trip Log</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="styles.css">
+  <script type="module" src="main.js"></script>
+</head>
+<body>
+  <header class="top">
+    <h1>Odometer Trip Log</h1>
+    <span id="mode" class="badge" hidden></span>
+  </header>
+
+  <main>
+    <p id="fatal" class="alert" role="alert" hidden></p>
+
+    <section aria-labelledby="trips-h">
+      <h2 id="trips-h">Record a trip</h2>
+      <form id="trip-form" novalidate>
+        <div class="grid">
+          <label>Date<input id="trip-date" name="trip_date" type="date" required></label>
+          <label>Vehicle<select id="trip-vehicle" name="vehicle_id" required></select></label>
+          <label>Start km<input id="trip-start" name="start_km" type="number" inputmode="numeric" min="0" step="1" required></label>
+          <label>End km<input id="trip-end" name="end_km" type="number" inputmode="numeric" min="0" step="1" required></label>
+          <label>Purpose<select id="trip-purpose" name="purpose_id" required></select></label>
+          <label>Destination<input id="trip-destination" name="destination" type="text" maxlength="120" autocomplete="off" required></label>
+        </div>
+        <p id="trip-error" class="alert" role="alert" hidden></p>
+        <p id="trip-ok" class="ok" role="status" hidden></p>
+        <button type="submit">Save trip</button>
+      </form>
+      <h2>Trips</h2>
+      <p id="trips-empty" class="muted">No trips yet.</p>
+      <ul id="trip-list" class="cards"></ul>
+    </section>
+
+    <section aria-labelledby="veh-h">
+      <h2 id="veh-h">Vehicles</h2>
+      <form id="vehicle-form" novalidate>
+        <div class="grid">
+          <label>Vehicle name<input id="veh-name" name="name" type="text" maxlength="80" required></label>
+          <label>Plate<input id="veh-plate" name="plate" type="text" maxlength="20" autocomplete="off" required></label>
+          <label>Fuel type<select id="veh-fuel" name="fuel_type" required></select></label>
+          <label>Starting odometer (km)<input id="veh-start" name="start_odometer_km" type="number" inputmode="numeric" min="0" step="1" required></label>
+        </div>
+        <p id="vehicle-error" class="alert" role="alert" hidden></p>
+        <button type="submit">Add vehicle</button>
+      </form>
+      <p id="vehicles-empty" class="muted">No vehicles yet. Add one to record trips.</p>
+      <ul id="vehicle-list" class="cards"></ul>
+    </section>
+  </main>
+</body>
+</html>
