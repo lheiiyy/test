@@ -17,9 +17,9 @@ Rules (the table in references/models.md mirrors them):
 - build: sonnet (haiku for documentation only); opus only when risky AND big.
 - fix: sonnet (haiku for documentation only); opus on risk, on the third review
   round, and on the second attempt at the same failure (before the run parks).
-- Leo can force a tier with `Model: opus` in the request, or with the Model field of
+- The owner can force a tier with `Model: opus` in the request, or with the Model field of
   the issue form. It applies to plan, revise, build, fix and review.
-- fable (the top tier) is never picked. It costs the most, so only Leo asks for it.
+- fable (the top tier) is never picked. It costs the most, so only the owner asks for it.
 
 `delegate` means the tier is above the model this task runs on (--session): hand
 the judgment to a subagent with that model and keep the scripts and the posting in
@@ -28,24 +28,18 @@ restarts cold and costs more than it saves.
 """
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from rules import ARCHITECTURE, DOCS, RISK_PATH, RISK_TEXT, is_docs_only, norm, sensitive_paths  # noqa: E402,F401
+
 RANK = {"haiku": 1, "sonnet": 2, "opus": 3, "fable": 4}
 STEPS = ["plan", "revise", "build", "fix", "review", "merge", "verify", "report"]
-THINKING = {"plan", "revise", "build", "fix", "review"}  # steps Leo may force a tier for
+THINKING = {"plan", "revise", "build", "fix", "review"}  # steps the owner may force a tier for
 
-DOCS = re.compile(r"\.(md|txt|rst)$", re.I)
-RISK_PATH = re.compile(
-    r"(auth(?!or)|permission|(^|[^a-z])roles?([^a-z]|$)|(^|[^a-z])acl([^a-z]|$)|secret|token|credential|passw|"
-    r"(^|[^a-z])pin([^a-z]|$)|schema|migration|\.sql$|payment|billing|payroll|security|^\.github/|"
-    r"(^|/)appsscript\.json$|\.clasp|deploy|(^|/)\.env)", re.I)
-RISK_TEXT = re.compile(
-    r"(authenticat|authoriz|permission|access control|role-based|data integrity|schema|migration|payment|"
-    r"billing|payroll|credential|destructive|delete (all|data))", re.I)
-ARCHITECTURE = re.compile(
-    r"(new system|new project|from scratch|architecture|rewrite|redesign|rebuild|platform|re-platform)", re.I)
 FORCED = re.compile(r"(?im)^[ \t]*(?:#{1,4}[ \t]*)?model\b(?![ \t]+plan)[^\n:]*?(?::[ \t]*|\n+[ \t]*)"
                     r"(auto|haiku|sonnet|opus)\b")
 HEADING = re.compile(r"(?m)^#{2,3}[ \t]+(.+?)[ \t]*$")
@@ -81,25 +75,26 @@ def forced_tier(text):
     return None
 
 
-def pick(step, paths=(), text="", tasks=0, attempt=1, round_=1, session=None):
+def pick(step, paths=(), text="", tasks=0, attempt=1, round_=1, session=None, declared=None):
     if step not in STEPS:
         raise ValueError(f"unknown step {step!r}; use one of {', '.join(STEPS)}")
-    paths = [re.sub(r"^\./", "", p.replace("\\", "/")) for p in paths if p]
-    docs_only = bool(paths) and all(DOCS.search(p) and not p.startswith(".github/") for p in paths)
-    risk_paths = [] if docs_only else [p for p in paths if RISK_PATH.search(p)]
+    paths = norm(paths)
+    docs_only = is_docs_only(paths)
+    risk_paths = sensitive_paths(paths)  # shared with route.py and the merge gate (rules.py)
     goal = objective_of(text or "")
     risk_text = RISK_TEXT.search(goal)
-    risky = bool(risk_paths or risk_text)
+    risky = bool(risk_paths or risk_text or declared == "high")
     large = len(paths) >= 8 or tasks >= 5
     heavy = bool(ARCHITECTURE.search(goal))
     why_risk = ("sensitive files: " + ", ".join(risk_paths[:3])) if risk_paths else (
-        f"the goal mentions {risk_text.group(1).lower()}" if risk_text else "")
+        f"the goal mentions {risk_text.group(1).lower()}" if risk_text else
+        "the plan declares Risk: high" if declared == "high" else "")
     forced = forced_tier(text) if step in THINKING else None
 
     if step in ("merge", "verify"):
         tier, why = "haiku", "a scripted command: run it and read its exit code"
     elif forced:
-        tier, why = forced, f"Leo's request sets the model to {forced}"
+        tier, why = forced, f"the owner's request sets the model to {forced}"
     elif step == "report":
         tier, why = "sonnet", "the report states results as facts, so keep it accurate"
     elif step in ("plan", "revise"):
@@ -111,7 +106,7 @@ def pick(step, paths=(), text="", tasks=0, attempt=1, round_=1, session=None):
         elif large:
             tier, why = "opus", "a big change"
         elif step == "revise" and round_ >= 2:
-            tier, why = "opus", "Leo has asked for a second revision"
+            tier, why = "opus", "the owner has asked for a second revision"
     elif step == "review":
         tier, why = "sonnet", "independent review: sonnet is the floor, even for documentation"
         if risky:
@@ -175,6 +170,8 @@ def main():
     ap.add_argument("--attempt", type=int, default=1, help="attempt at the same failure, 1 or 2")
     ap.add_argument("--round", type=int, default=1, dest="round_", help="plan revision or review round")
     ap.add_argument("--session", default=None, help="model of the running task: haiku, sonnet, opus (default sonnet)")
+    ap.add_argument("--declared-risk", choices=("low", "normal", "high"), default=None,
+                    help="the plan's Risk: line; high counts as a sensitive change")
     args = ap.parse_args()
 
     try:
@@ -184,7 +181,7 @@ def main():
         text = ""
         if args.text:
             text = sys.stdin.read() if args.text == "-" else open(args.text, encoding="utf-8").read()
-        report = pick(args.step, paths, text, args.tasks, args.attempt, args.round_, args.session)
+        report = pick(args.step, paths, text, args.tasks, args.attempt, args.round_, args.session, args.declared_risk)
     except (ValueError, OSError) as e:
         json.dump({"ok": False, "error": str(e)}, sys.stdout, indent=2)
         print()

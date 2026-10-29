@@ -20,3 +20,7 @@ android/.cxx/
 
 # Vite
 .vite/
+
+# Python (github-loop scripts)
+__pycache__/
+*.pyc

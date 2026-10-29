@@ -5,8 +5,10 @@ One command replaces the "list issues, fetch comments, run the guard" steps, so 
 idle scheduled run costs almost no tokens: if `work` is empty, the run just says
 "No new work." and stops.
 
-    python scripts/triage.py --repo lheiiyy/test --owner lheiiyy --role code
-    python scripts/triage.py --repo lheiiyy/test --owner lheiiyy --role lead
+    python scripts/triage.py --repo <owner>/<repo> --role code
+    python scripts/triage.py --repo <owner>/<repo> --role lead
+
+--owner defaults to "owner" in .github/github-loop.json, else the user who owns the repo.
 
 --role code  the Engineer: build, fix, merge, continue (phase 2), classic tasks. It also
              parks needs_leo and stale entries.
@@ -25,56 +27,49 @@ Prints one JSON object:
              next_turn and reply_header. Autopilot entries also carry work_type, phase,
              role, notes, and for review, fix and merge the pr and head.
   needs_leo  issues the guard parked (caps; missing Goal or Acceptance criteria)
-  reopen     closed issues Leo answered with APPROVED, REVISE: or CONTINUE: (he tapped "Close with
-             comment"); run `loop_gh.py reopen`, then run triage again
+  reopen     closed issues the owner answered with APPROVED, REVISE: or CONTINUE: ("Close with
+             comment" was tapped); run `loop_gh.py reopen`, then run triage again
   deferred   work that needs a stronger model than --max-tier; another task takes it
   stalled    the OTHER role's work that no run picked up for --stall-minutes (default 180); park it
-             with `loop_gh.py park --from <your role>` so Leo sees it
+             with `loop_gh.py park --from <your role>` so the owner sees it
   stale      issues stuck on code-working longer than --stale-minutes, or
              --build-stale-minutes for an approved autopilot build (a crashed run)
   ignored    issues skipped, with the reason (for example "waiting for the owner's APPROVED")
 
-Exit codes: 0 ok (including "No new work."), 2 API or input failure. A failure is never
-reported as "No new work.", so a broken token cannot look like an idle queue.
+Exit codes: 0 ok (including "No new work."), 2 API or input failure (including a missing `gh`).
+A failure is never reported as "No new work.", so a broken token cannot look like an idle queue.
+Every list is read to its last page (comments come oldest first, so the newest keyword is on the
+last page); a rate limit or server error is retried before the run gives up.
 
 Test without the network: --fixtures DIR with issues.json, <N>.comments.json, <N>.events.json.
 """
 import argparse
 import json
 import os
-import subprocess
 import sys
 from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from loop_guard import approval_status, decide, is_autopilot  # noqa: E402
+import config as loop_config  # noqa: E402
+from ghapi import ApiError, get_all, get_json  # noqa: E402
+from loop_guard import approval_status, decide, is_autopilot, set_owner_associations  # noqa: E402
 from pick_model import RANK, pick  # noqa: E402
 
 LOOP_LABELS = {"to-code", "code-working", "awaiting-approval", "needs-leo", "to-review", "reviewed"}
-OWNER_WAITS = {"awaiting-approval", "needs-leo"}  # states where Leo's keyword is the next event
+OWNER_WAITS = {"awaiting-approval", "needs-leo"}  # states where the owner's keyword is the next event
 STEP_FOR = {"plan": "plan", "revise": "revise", "build": "build", "fix": "fix", "review": "review",
             "merge": "merge"}
 
 
-class ApiError(Exception):
-    pass
-
-
-def fetch(path, fixtures, fixture_name):
-    """Return parsed JSON for a REST path, or for a fixture file when --fixtures is set."""
+def fetch(path, fixtures, fixture_name, all_pages=True):
+    """Every page of a REST list, or a fixture file when --fixtures is set (missing = empty)."""
     if fixtures:
         full = os.path.join(fixtures, fixture_name)
         if not os.path.exists(full):
             return []  # a missing fixture means "no comments / no events"
         with open(full, encoding="utf-8") as f:
             return json.load(f)
-    proc = subprocess.run(["gh", "api", path], capture_output=True, text=True)
-    if proc.returncode != 0:
-        raise ApiError(f"gh api {path} failed: {(proc.stderr or proc.stdout).strip()[:300]}")
-    try:
-        return json.loads(proc.stdout)
-    except json.JSONDecodeError as e:
-        raise ApiError(f"gh api {path} returned non-JSON: {e}")
+    return get_all(path) if all_pages else get_json(path)
 
 
 def parse_time(value):
@@ -100,7 +95,7 @@ def tier_of(item, issue, repo, fixtures):
     paths, caveat = [], ""
     if step in ("review", "fix") and item.get("pr"):
         try:
-            files = fetch(f"repos/{repo}/pulls/{item['pr']}/files?per_page=100", fixtures,
+            files = fetch(f"repos/{repo}/pulls/{item['pr']}/files", fixtures,
                           f"pr{item['pr']}.files.json")
             paths = [f.get("filename", "") for f in files]
         except ApiError:
@@ -111,11 +106,12 @@ def tier_of(item, issue, repo, fixtures):
 
 def reopen_candidates(repo, owner, max_turn, now, fixtures, reopen_hours, max_replies, max_revisions,
                       max_review_rounds):
-    """Closed autopilot issues where Leo's keyword is the next event. 'Close with comment' closes the issue
-    along with the comment, and the loop only scans open issues, so without this the approval is never seen.
-    Closed as 'not planned' means Leo abandoned it, and finished issues carry `done`; both are left closed."""
+    """Closed autopilot issues where the owner's keyword is the next event. 'Close with comment' closes the
+    issue along with the comment, and the loop only scans open issues, so without this the approval is never
+    seen. Closed as 'not planned' means the owner abandoned it, and finished issues carry `done`; both are left
+    closed. Only the 30 most recently updated closed issues are looked at (a recency window, by design)."""
     closed = fetch(f"repos/{repo}/issues?state=closed&sort=updated&direction=desc&per_page=30", fixtures,
-                   "closed.json")
+                   "closed.json", all_pages=False)
     found = []
     for issue in closed:
         if "pull_request" in issue or issue.get("state_reason") == "not_planned":
@@ -126,7 +122,7 @@ def reopen_candidates(repo, owner, max_turn, now, fixtures, reopen_hours, max_re
         if reopen_hours and minutes_since(issue.get("updated_at"), now) > reopen_hours * 60:
             continue
         number = issue["number"]
-        issue = dict(issue, comments=fetch(f"repos/{repo}/issues/{number}/comments?per_page=100", fixtures,
+        issue = dict(issue, comments=fetch(f"repos/{repo}/issues/{number}/comments", fixtures,
                                            f"{number}.comments.json"))
         decision = decide(issue, owner, max_turn, None, max_replies, max_revisions, max_review_rounds)
         if decision["action"] == "proceed":
@@ -138,7 +134,7 @@ def reopen_candidates(repo, owner, max_turn, now, fixtures, reopen_hours, max_re
 def triage(repo, owner, max_turn, stale_minutes, now, fixtures, build_stale_minutes=180,
            max_replies=20, max_revisions=3, role="code", max_review_rounds=4,
            max_tier=None, min_tier=None, defer_minutes=120, stall_minutes=180, reopen_hours=48):
-    issues = fetch(f"repos/{repo}/issues?state=open&per_page=100", fixtures, "issues.json")
+    issues = fetch(f"repos/{repo}/issues?state=open", fixtures, "issues.json")
     result = {"repo": repo, "owner": owner, "role": role, "work": [], "needs_leo": [], "stale": [], "ignored": [],
               "reopen": [], "deferred": [], "stalled": []}
     parks = role in ("code", "all")
@@ -154,10 +150,10 @@ def triage(repo, owner, max_turn, stale_minutes, now, fixtures, build_stale_minu
         watched = {"to-code", "code-working"} | (LOOP_LABELS if autopilot else set())
         if not labels & watched or "done" in labels:
             continue
-        comments = fetch(f"repos/{repo}/issues/{number}/comments?per_page=100", fixtures, f"{number}.comments.json")
+        comments = fetch(f"repos/{repo}/issues/{number}/comments", fixtures, f"{number}.comments.json")
         issue = dict(issue, comments=comments)
         needs_events = bool(labels & {"to-code", "code-working"})
-        events = fetch(f"repos/{repo}/issues/{number}/events?per_page=100", fixtures,
+        events = fetch(f"repos/{repo}/issues/{number}/events", fixtures,
                        f"{number}.events.json") if needs_events else []
 
         if "code-working" in labels:
@@ -221,7 +217,7 @@ def triage(repo, owner, max_turn, stale_minutes, now, fixtures, build_stale_minu
     if result["work"]:
         parts.append(f"{len(result['work'])} to do")
     if result["needs_leo"]:
-        parts.append(f"{len(result['needs_leo'])} need Leo")
+        parts.append(f"{len(result['needs_leo'])} need the owner")
     if result["stale"]:
         parts.append(f"{len(result['stale'])} stale")
     if result["stalled"]:
@@ -237,7 +233,8 @@ def triage(repo, owner, max_turn, stale_minutes, now, fixtures, build_stale_minu
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--repo", required=True, help="owner/name")
-    ap.add_argument("--owner", required=True, help="login of the repo owner")
+    ap.add_argument("--owner", default=None, help="login of the owner (default: config, then the repo's owner)")
+    ap.add_argument("--config", default=None, help="settings file (default .github/github-loop.json)")
     ap.add_argument("--role", choices=("code", "lead", "all"), default="code")
     ap.add_argument("--max-turn", type=int, default=4, help="classic mode turn cap")
     ap.add_argument("--stale-minutes", type=int, default=90)
@@ -261,7 +258,10 @@ def main():
 
     now = parse_time(args.now) if args.now else datetime.now(timezone.utc)
     try:
-        result = triage(args.repo, args.owner, args.max_turn, args.stale_minutes, now, args.fixtures,
+        cfg = loop_config.load(args.config)
+        set_owner_associations(cfg["owner_associations"])
+        owner = loop_config.resolve_owner(args.repo, args.owner, cfg, args.fixtures)
+        result = triage(args.repo, owner, args.max_turn, args.stale_minutes, now, args.fixtures,
                         args.build_stale_minutes, args.max_replies, args.max_revisions, args.role,
                         args.max_review_rounds, args.max_tier, args.min_tier, args.defer_minutes,
                         args.stall_minutes, args.reopen_hours)
