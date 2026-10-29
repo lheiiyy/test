@@ -1,6 +1,6 @@
 # Autopilot request template (Leo's)
 
-File it with the **Autopilot request** issue form (Issues → New issue), which applies `to-code` for you. Or paste it into a new issue, fill every `[PLACEHOLDER]`, and add the `to-code` label. The Lead (Claude Cowork) answers with a plan and a readiness matrix within about an hour; Claude Code builds after approval, the Lead reviews, and Code merges and reports. Reply `APPROVED` (capitals) to build and merge, `REVISE: <notes>` to change the plan, or `CONTINUE: <answer>` to answer a question.
+File it with the **Autopilot request** issue form (Issues → New issue), which applies `to-code` for you. Or paste it into a new issue, fill every `[PLACEHOLDER]`, and add the `to-code` label. The Lead (Claude Cowork) answers with a plan and a readiness matrix within about an hour; Claude Code builds after approval, the Lead reviews, and Code merges and reports. Reply `APPROVED` (capitals) to build and merge, `REVISE: <notes>` to change the plan, or `CONTINUE: <answer>` to answer a question. Tap **Comment**, not "Close with comment".
 
 The `## Phase 1` and `## Phase 2` headings are what switch the loop into autopilot mode, so keep them.
 

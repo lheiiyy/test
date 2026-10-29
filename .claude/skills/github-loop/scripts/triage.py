@@ -13,12 +13,23 @@ idle scheduled run costs almost no tokens: if `work` is empty, the run just says
 --role lead  the Technical Lead (Cowork): plan, revise, review, continue (phase 1).
 --role all   both (one session doing every role; avoid it when a separate Lead task exists,
              because a review should come from a different session than the build).
+--max-tier T / --min-tier T   split the work between tasks that run different models. Every
+             work entry carries `tier` (what its step needs, from pick_model.py). A task with
+             --max-tier sonnet leaves opus-tier work in `deferred` for a stronger task, and
+             takes it anyway after --defer-minutes (default 120) so nothing waits forever, with
+             tier_note telling it to say so in its Model line. A task with --min-tier opus takes
+             only opus-tier work.
 
 Prints one JSON object:
   work       issues for this role that passed every guard (oldest first), each with
              next_turn and reply_header. Autopilot entries also carry work_type, phase,
              role, notes, and for review, fix and merge the pr and head.
   needs_leo  issues the guard parked (caps; missing Goal or Acceptance criteria)
+  reopen     closed issues Leo answered with APPROVED, REVISE: or CONTINUE: (he tapped "Close with
+             comment"); run `loop_gh.py reopen`, then run triage again
+  deferred   work that needs a stronger model than --max-tier; another task takes it
+  stalled    the OTHER role's work that no run picked up for --stall-minutes (default 180); park it
+             with `loop_gh.py park --from <your role>` so Leo sees it
   stale      issues stuck on code-working longer than --stale-minutes, or
              --build-stale-minutes for an approved autopilot build (a crashed run)
   ignored    issues skipped, with the reason (for example "waiting for the owner's APPROVED")
@@ -37,8 +48,12 @@ from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from loop_guard import approval_status, decide, is_autopilot  # noqa: E402
+from pick_model import RANK, pick  # noqa: E402
 
 LOOP_LABELS = {"to-code", "code-working", "awaiting-approval", "needs-leo", "to-review", "reviewed"}
+OWNER_WAITS = {"awaiting-approval", "needs-leo"}  # states where Leo's keyword is the next event
+STEP_FOR = {"plan": "plan", "revise": "revise", "build": "build", "fix": "fix", "review": "review",
+            "merge": "merge"}
 
 
 class ApiError(Exception):
@@ -72,11 +87,63 @@ def latest_label_event(events, label):
     return max(found, key=lambda e: e.get("created_at", ""), default=None)
 
 
+def minutes_since(value, now):
+    return int((now - parse_time(value)).total_seconds() // 60) if value else 0
+
+
+def tier_of(item, issue, repo, fixtures):
+    """What model tier this step needs, from pick_model.py. The PR's file list (one call) sharpens review and
+    fix; if it is unavailable the tier is a floor and says so. The step itself re-runs pick_model.py with the
+    real diff, and that answer wins."""
+    wt = item.get("work_type")
+    step = STEP_FOR.get(wt) or ("plan" if item.get("phase") == 1 else "build")
+    paths, caveat = [], ""
+    if step in ("review", "fix") and item.get("pr"):
+        try:
+            files = fetch(f"repos/{repo}/pulls/{item['pr']}/files?per_page=100", fixtures,
+                          f"pr{item['pr']}.files.json")
+            paths = [f.get("filename", "") for f in files]
+        except ApiError:
+            caveat = " (the PR's files could not be read, so this tier is a floor)"
+    report = pick(step, paths, issue.get("body") or "", round_=item.get("round") or item.get("review_round") or 1)
+    return report["tier"], report["reasons"][0] + caveat
+
+
+def reopen_candidates(repo, owner, max_turn, now, fixtures, reopen_hours, max_replies, max_revisions,
+                      max_review_rounds):
+    """Closed autopilot issues where Leo's keyword is the next event. 'Close with comment' closes the issue
+    along with the comment, and the loop only scans open issues, so without this the approval is never seen.
+    Closed as 'not planned' means Leo abandoned it, and finished issues carry `done`; both are left closed."""
+    closed = fetch(f"repos/{repo}/issues?state=closed&sort=updated&direction=desc&per_page=30", fixtures,
+                   "closed.json")
+    found = []
+    for issue in closed:
+        if "pull_request" in issue or issue.get("state_reason") == "not_planned":
+            continue
+        labels = {l["name"] if isinstance(l, dict) else l for l in issue.get("labels") or []}
+        if "done" in labels or not labels & OWNER_WAITS or not is_autopilot(issue.get("body")):
+            continue
+        if reopen_hours and minutes_since(issue.get("updated_at"), now) > reopen_hours * 60:
+            continue
+        number = issue["number"]
+        issue = dict(issue, comments=fetch(f"repos/{repo}/issues/{number}/comments?per_page=100", fixtures,
+                                           f"{number}.comments.json"))
+        decision = decide(issue, owner, max_turn, None, max_replies, max_revisions, max_review_rounds)
+        if decision["action"] == "proceed":
+            found.append({"number": number, "title": issue.get("title", ""), "would_run": decision.get("work_type"),
+                          "reason": "closed with the owner's keyword as the newest comment"})
+    return found
+
+
 def triage(repo, owner, max_turn, stale_minutes, now, fixtures, build_stale_minutes=180,
-           max_replies=20, max_revisions=3, role="code", max_review_rounds=4):
+           max_replies=20, max_revisions=3, role="code", max_review_rounds=4,
+           max_tier=None, min_tier=None, defer_minutes=120, stall_minutes=180, reopen_hours=48):
     issues = fetch(f"repos/{repo}/issues?state=open&per_page=100", fixtures, "issues.json")
-    result = {"repo": repo, "owner": owner, "role": role, "work": [], "needs_leo": [], "stale": [], "ignored": []}
+    result = {"repo": repo, "owner": owner, "role": role, "work": [], "needs_leo": [], "stale": [], "ignored": [],
+              "reopen": [], "deferred": [], "stalled": []}
     parks = role in ("code", "all")
+    result["reopen"] = reopen_candidates(repo, owner, max_turn, now, fixtures, reopen_hours, max_replies,
+                                         max_revisions, max_review_rounds)
 
     for issue in sorted(issues, key=lambda i: i["number"]):
         if "pull_request" in issue:
@@ -112,16 +179,36 @@ def triage(repo, owner, max_turn, stale_minutes, now, fixtures, build_stale_minu
         decision = decide(issue, owner, max_turn, labeled_by, max_replies, max_revisions, max_review_rounds)
         entry = {"number": number, "title": issue.get("title", ""), "labeled_by": labeled_by, "mode": decision["mode"]}
         if decision["action"] == "proceed":
+            waited = minutes_since(issue.get("updated_at"), now)
             if role != "all" and decision.get("role", "code") != role:
-                result["ignored"].append(dict(entry, reason=f"{decision.get('work_type', 'task')} is "
-                                                            f"{decision.get('role')} work"))
+                work_type = decision.get("work_type", "task")
+                if autopilot and waited >= stall_minutes:
+                    # the other role's work sat untouched for several cycles: a silent or broken run
+                    result["stalled"].append(dict(entry, next_turn=decision["next_turn"], work_type=work_type,
+                                                  phase=decision.get("phase", 1), for_role=decision.get("role"),
+                                                  waiting_minutes=waited))
+                else:
+                    result["ignored"].append(dict(entry, reason=f"{work_type} is {decision.get('role')} work"))
                 continue
             item = dict(entry, next_turn=decision["next_turn"], reply_header=decision["reply_header"],
                         role=decision.get("role", "code"))
             if autopilot:
-                for key in ("work_type", "phase", "notes", "pr", "head", "review_round", "since"):
+                for key in ("work_type", "phase", "notes", "pr", "head", "review_round", "round", "since"):
                     if key in decision:
                         item[key] = decision[key]
+                item["tier"], item["tier_reason"] = tier_of(item, issue, repo, fixtures)
+                if min_tier and RANK[item["tier"]] < RANK[min_tier]:
+                    result["ignored"].append(dict(entry, reason=f"{item['tier']}-tier {item['work_type']}; this task "
+                                                                f"only takes {min_tier} and above"))
+                    continue
+                if max_tier and RANK[item["tier"]] > RANK[max_tier]:
+                    if waited < defer_minutes:
+                        result["deferred"].append(dict(entry, work_type=item["work_type"], tier=item["tier"],
+                                                       waiting_minutes=waited,
+                                                       takes_over_in=defer_minutes - waited))
+                        continue
+                    item["tier_note"] = (f"waited {waited} min for a {item['tier']} task; run it at your own tier "
+                                         f"({max_tier}) and say so in the Model line")
             result["work"].append(item)
         elif decision["action"] == "needs-leo":
             target = result["needs_leo"] if parks else result["ignored"]
@@ -137,7 +224,13 @@ def triage(repo, owner, max_turn, stale_minutes, now, fixtures, build_stale_minu
         parts.append(f"{len(result['needs_leo'])} need Leo")
     if result["stale"]:
         parts.append(f"{len(result['stale'])} stale")
+    if result["stalled"]:
+        parts.append(f"{len(result['stalled'])} stalled")
+    if result["reopen"]:
+        parts.append(f"{len(result['reopen'])} to reopen")
     result["summary"] = ", ".join(parts) if parts else "No new work."
+    if result["deferred"]:
+        result["summary"] += f" ({len(result['deferred'])} deferred to a stronger task)"
     return result
 
 
@@ -152,6 +245,16 @@ def main():
     ap.add_argument("--max-replies", type=int, default=20, help="autopilot agent reply cap")
     ap.add_argument("--max-revisions", type=int, default=3, help="autopilot plan revision cap")
     ap.add_argument("--max-review-rounds", type=int, default=4, help="autopilot change-request cap")
+    ap.add_argument("--max-tier", choices=("haiku", "sonnet", "opus"), default=None,
+                    help="the model this task runs on; stronger-tier work is deferred to another task")
+    ap.add_argument("--min-tier", choices=("haiku", "sonnet", "opus"), default=None,
+                    help="take only work at this tier or above (for a task that runs a stronger model)")
+    ap.add_argument("--defer-minutes", type=int, default=120,
+                    help="how long deferred work waits for a stronger task before this one takes it")
+    ap.add_argument("--stall-minutes", type=int, default=180,
+                    help="the other role's pending work older than this is reported as stalled")
+    ap.add_argument("--reopen-hours", type=int, default=48,
+                    help="only closed issues updated within this many hours can be reopened (0 = any)")
     ap.add_argument("--fixtures", default=None, help="directory of JSON fixtures instead of the network")
     ap.add_argument("--now", default=None, help="ISO time to treat as now (for tests)")
     args = ap.parse_args()
@@ -160,7 +263,8 @@ def main():
     try:
         result = triage(args.repo, args.owner, args.max_turn, args.stale_minutes, now, args.fixtures,
                         args.build_stale_minutes, args.max_replies, args.max_revisions, args.role,
-                        args.max_review_rounds)
+                        args.max_review_rounds, args.max_tier, args.min_tier, args.defer_minutes,
+                        args.stall_minutes, args.reopen_hours)
     except (ApiError, KeyError, ValueError) as e:
         json.dump({"error": str(e), "summary": "TRIAGE FAILED, not an empty queue"}, sys.stdout, indent=2)
         print()

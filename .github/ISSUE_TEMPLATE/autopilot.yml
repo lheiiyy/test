@@ -9,6 +9,7 @@ body:
         Fill the first eight fields; the rest are Leo's standard rules and can stay as they are.
         The Lead posts a plan and readiness matrix within about an hour. Then comment `APPROVED` (capitals) to build and merge,
         `REVISE: <notes>` to change the plan, or `CONTINUE: <answer>` to answer a question.
+        Tap **Comment**, not "Close with comment": closing hides the issue from the loop.
   - type: input
     id: objective
     attributes:

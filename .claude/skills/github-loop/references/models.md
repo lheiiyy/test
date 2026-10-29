@@ -40,13 +40,26 @@ Only the goal counts for risk words in a request (the Objective section), becaus
 
   Then verify its work yourself: for a review, `git rev-parse` must equal the head Code named, and the tests must have run fresh; run `check_reply.py` or `check_plan.py`; post with the `loop_gh.py` command.
 - **No Agent tool in this session:** run the step inline and add `Model note: <tier> recommended (<reason>); ran on <session>.` to the reply. For a sensitive review, Leo can say "review the PR" in a chat on Opus.
-- **Say what ran:** put one line `Model: <tier> (<reason>)` in the reply, for example `Model: opus (subagent): auth files changed`. Never claim a model that did not run.
+- **Say what ran:** put exactly one line `Model: <haiku|sonnet|opus>` in a plan, phase 2 result, verdict and summary, naming the model that produced the judgment. `pick_model.py` prints the true line in `model_line`: `Model: opus (via subagent)` when a subagent did it, or `Model: sonnet (wanted opus; ran inline, no subagent)` when the step wanted more than this task has. `check_reply.py` rejects a missing or doubled line, and a "wanted" tier that does not say how the gap was handled. Never claim a model that did not run.
 
 ## Recommended task setup
 
-Put both scheduled tasks on **Sonnet**: triage costs almost nothing and Sonnet is the workhorse for builds and reviews. Opus is then used only where the rules above say so. The skill cannot change a task's own model, and a scheduled run can only go up by delegating. Ask Claude in chat to change a task's model.
+Put both scheduled tasks on **Sonnet**: triage costs almost nothing and Sonnet is the workhorse for builds and reviews. Opus is then used only where the rules above say so. The skill cannot change a task's own model. Ask Claude in chat to change a task's model.
+
+## Two Lead tasks (optional): how sensitive work reaches Opus
+
+A scheduled run showed no subagent use, so a Sonnet Lead cannot reliably hand a review to Opus. Triage routes by tier instead:
+
+| Task | Triage flags | Takes |
+|---|---|---|
+| Lead (Sonnet, hourly) | `--role lead --max-tier sonnet` | Work whose tier is sonnet or lower. Opus-tier work waits in `deferred`. |
+| Lead Deep (Opus, every 2 hours) | `--role lead --min-tier opus` | Only opus-tier work: sensitive files or goal words, 8 or more files, an architecture-heavy goal, the third round, the second revision, or Leo's `Model: opus`. |
+
+- Each work entry carries `tier` and `tier_reason`, an estimate from the request and the PR's file list (one extra call, review and fix only). The step still runs `pick_model.py` with the real diff, and that answer wins.
+- **No deadlock:** after `--defer-minutes` (default 120) the normal Lead takes deferred work anyway. The entry then has a `tier_note`, and the Model line must say `wanted opus; ran inline`. If Lead Deep does not exist, leave `--max-tier` off.
+- Leo's `Model:` override feeds the same estimate, so `Model: opus` sends a request to Lead Deep and `Model: sonnet` keeps it on the normal Lead.
 
 ## Known limits
 
-- Whether a scheduled cloud run can start subagents is **UNVERIFIED** until a run shows it. Without them, the fallback above keeps the loop working on the task's model.
+- Whether a scheduled cloud run can start subagents is **UNVERIFIED**, and the one live run did not use any. Without them, the fallback above keeps the loop working on the task's model, and the Model line says so.
 - The script sees file names and the goal, not hidden complexity. That is why a run may go one tier up, and why review never drops below sonnet.
