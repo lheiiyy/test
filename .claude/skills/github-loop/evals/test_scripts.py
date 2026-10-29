@@ -1266,6 +1266,8 @@ if mode in ("rate_limit", "server_error"):
     mode = "quiet"
 if mode == "quiet":
     out([])
+if mode == "merge_refused":
+    fail("gh: Pull Request is not mergeable (HTTP 405)")
 if mode in ("page2", "endless"):
     if "/comments" in path:
         if mode == "endless":
@@ -1499,6 +1501,18 @@ class MergeGateRuleTests(unittest.TestCase):
         self.assertEqual(code, 5, out)
         self.assertIn("1 of 3", out["problem"])
 
+    def test_a_refused_merge_call_is_reported_and_never_retried(self):
+        tmp = tempfile.mkdtemp()
+        env = stub_env("merge_refused", tmp)
+        issue_ = ap_issue(["code-working"])
+        issue_.pop("comments")
+        fx = write_fixtures({"issue.json": issue_, "comments.json": MergeTests.REVIEWED, "pr.json": self.PR})
+        code, out, _ = run_env(env, os.path.join(SCRIPTS, "loop_gh.py"), "merge", "--repo", "o/r", "--issue", "9",
+                               "--pr", "6", "--owner", OWNER, "--fixtures", fx)
+        self.assertEqual(code, 2, out)
+        self.assertIn("405", out["problem"])
+        self.assertEqual(len([c_ for c_ in calls_of(tmp) if "/merge" in c_]), 1)
+
     def test_risk_is_judged_after_every_other_gate(self):
         code, _, _ = self.merge(files=["src/auth/login.js"], mergeable_state="dirty")
         self.assertEqual(code, 5)  # the owner is only asked to tap Merge when everything else is green
@@ -1723,6 +1737,12 @@ class RouterTests(unittest.TestCase):
         r = rt.route("review", ["src/app.js"], declared="high")
         self.assertEqual((r["risk"], r["model"]["tier"]), ("high", "opus"))
         self.assertEqual(rt.route("plan", text="## Objective\nAdd role-based permissions.\n")["risk"], "high")
+
+    def test_a_note_file_name_is_not_a_code_change(self):
+        r = rt.route("build", ["src/app.js", "docs/database.md", "references/deployment.md"])
+        self.assertNotIn("database", self.ids(r))
+        self.assertNotIn("deployment", self.ids(r))
+        self.assertIn("documentation", self.ids(r))
 
     def test_base_gates_always_apply(self):
         for step, paths in (("build", ["README.md"]), ("review", ["src/app.js"]), ("plan", [])):

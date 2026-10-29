@@ -1,6 +1,6 @@
-# Autopilot request template (Leo's)
+# Autopilot request template (the owner's)
 
-File it with the **Autopilot request** issue form (Issues → New issue), which applies `to-code` for you. Or paste it into a new issue, fill every `[PLACEHOLDER]`, and add the `to-code` label. The Lead (Claude Cowork) answers with a plan and a readiness matrix within about an hour; Claude Code builds after approval, the Lead reviews, and Code merges and reports. Reply `APPROVED` (capitals) to build and merge, `REVISE: <notes>` to change the plan, or `CONTINUE: <answer>` to answer a question. Tap **Comment**, not "Close with comment".
+File it with the **Autopilot request** issue form (Issues → New issue), which applies `to-code` for you. Or paste it into a new issue, fill every `[PLACEHOLDER]`, and add the `to-code` label. The Lead (Claude Cowork) answers with a plan and a readiness matrix within about an hour; Claude Code builds after approval, the Lead reviews, and Code merges and reports. Reply `APPROVED` (capitals) to build and merge, `REVISE: <notes>` to change the plan, or `CONTINUE: <answer>` to answer a question. High-risk work (login, permissions, secrets, schema, deploys, workflows, the loop's own skill) waits for your Merge tap at the end. Tap **Comment**, not "Close with comment". A request that changes no code says `No PR: yes` in its body.
 
 The `## Phase 1` and `## Phase 2` headings are what switch the loop into autopilot mode, so keep them.
 
@@ -23,7 +23,7 @@ Write docs/plan-[FEATURE].md (inside the project folder) with these sections, ea
 2. Architecture: components, data flow, schema changes, integration points, migration path, key decisions with one-line reasons.
 3. Task breakdown: ordered tasks, each with the responsible agent, the files touched and a pass/fail check.
 4. Test plan: what gets tested, with which tooling, and what "tests pass" means.
-5. Merge plan: branch name, merge method, the conditions for merging, and the release policy.
+5. Merge plan: branch name, merge method, the conditions for merging, the release policy, and two lines of their own: `Risk: low|normal|high` and `CI required: yes|no`.
 6. Readiness: READY / NEEDS SETUP / BLOCKED / NOT REQUIRED / UNVERIFIED for every dependency, and one checklist of what I must do by hand.
 End the file with the line "AWAITING APPROVAL". Make no code changes in Phase 1.
 

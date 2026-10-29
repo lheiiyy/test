@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "about": "Experts that route.py can select. Add one with an entry here and a note of 25 lines or fewer; no code change. An expert is selected on any match: steps (the step being run), paths (regex on changed or planned files), words (regex on the request's Objective), risk (the change's risk tier) or min_files. Routing only ever adds gates.",
+  "about": "Experts that route.py can select. Add one with an entry here and a note of 25 lines or fewer; no code change. An expert is selected on any match: steps (the step being run), paths (regex on changed or planned files), words (regex on the request's Objective), risk (the change's risk tier) or min_files. Path patterns look at code files only, unless an entry sets match_docs. Routing only ever adds gates.",
   "experts": [
     {"id": "requirements", "note": "references/experts/requirements.md", "steps": ["plan", "revise"]},
     {"id": "architecture", "note": "references/experts/architecture.md",
@@ -22,6 +22,7 @@
      "paths": ["^\\.github/workflows/", "deploy", "\\.clasp", "(^|/)appsscript\\.json$", "(^|/)Dockerfile$", "(^|/)\\.env"],
      "words": ["deploy", "release", "staging", "production", "hosting", "github pages"]},
     {"id": "documentation", "note": "references/experts/documentation.md",
-     "paths": ["\\.(md|txt|rst)$"], "words": ["readme", "\\bdocs?\\b", "documentation", "\\bguide\\b"]}
+     "paths": ["\\.(md|txt|rst)$"], "match_docs": true,
+     "words": ["readme", "\\bdocs?\\b", "documentation", "\\bguide\\b"]}
   ]
 }

@@ -14,7 +14,8 @@ Prints one JSON object:
 Rules, not judgment, set the risk: a sensitive file or the skill itself, risk words in the
 request's Objective, or the plan's declared `Risk:` (--declared-risk) make it high. Nothing can
 lower a tier a rule set. Documentation-only changes route to the documentation expert alone.
-Adding an expert is a registry edit only (an entry plus a note of 25 lines or fewer).
+Adding an expert is a registry edit only (an entry plus a note of 25 lines or fewer). Path patterns
+look at code files only, unless the entry sets "match_docs": true.
 Exit 0, or 2 on bad input.
 """
 import argparse
@@ -26,7 +27,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 from pick_model import objective_of, paths_from_git, pick  # noqa: E402
-from rules import RISK_TEXT, is_docs_only, norm, risk_tier  # noqa: E402
+from rules import DOCS, RISK_TEXT, is_docs_only, norm, risk_tier  # noqa: E402
 
 REGISTRY = os.path.join(os.path.dirname(HERE), "references", "experts", "registry.json")
 STEPS = ("plan", "revise", "build", "fix", "review")
@@ -50,6 +51,10 @@ def load_registry(path=REGISTRY):
 
 
 def matches(expert, step, paths, goal, tier):
+    """Path patterns look at code files only (a note named database.md is not a database change), unless the
+    expert sets "match_docs"."""
+    if not expert.get("match_docs"):
+        paths = [p for p in paths if not DOCS.search(p) or p.startswith(".github/")]
     if step in expert.get("steps", []):
         return True
     if tier in expert.get("risk", []):
