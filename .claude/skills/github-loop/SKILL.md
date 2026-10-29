@@ -36,14 +36,23 @@ A task message then has these sections: `## Goal`, `## Context` (file paths and 
 ## Executor procedure
 
 1. Save the issue and run the guard. The guard is deterministic, so it costs almost nothing and does not depend on your judgment:
-   `gh issue view <N> --json number,labels,author,body,comments > issue.json`
-   `python scripts/loop_guard.py issue.json --owner <repo owner login> [--labeled-by <actor>]`
+   `gh api repos/<owner>/<repo>/issues/<N> > issue.json`
+   `gh api "repos/<owner>/<repo>/issues/<N>/comments?per_page=100" > comments.json`
+   `python scripts/loop_guard.py issue.json --comments comments.json --owner <repo owner login> [--labeled-by <actor>]`
 2. Obey the result. `ignore` → do nothing and say nothing on the issue. `needs-leo` → post the guard's reason as a short comment, add `needs-leo`, remove `to-code`, stop. `proceed` → continue.
 3. Claim the issue: add `code-working`, remove `to-code`.
 4. Do the work. Read only the files the issue names. Work on a `claude/` branch and open a PR. Never push to `main`, never edit `.github/workflows` unless the task says so.
 5. If the task turns out to be ambiguous or blocked, stop and ask in one comment (batch all questions) with `needs-leo`. A wrong guess costs more tokens than a question.
 6. Write the reply to `reply.md`: the header (`from=code`, `turn` = the guard's `next_turn`), then at most 150 words: what changed, the PR or branch link, how it was checked, open questions. Run `python scripts/check_reply.py reply.md --turn <next_turn> --add to-chat --remove code-working` and fix anything it reports.
 7. Post the comment, then apply the labels: remove `code-working`, add `to-chat` (or `needs-leo`).
+
+## GitHub calls (REST only)
+
+Cloud sessions block GraphQL, so `gh issue view`, `gh issue edit` and `gh pr create` fail there. Use `gh api` instead:
+- Comment: `gh api -X POST repos/<o>/<r>/issues/<N>/comments -F body=@reply.md`
+- Add a label: `gh api -X POST repos/<o>/<r>/issues/<N>/labels -f 'labels[]=to-chat'`
+- Remove a label: `gh api -X DELETE repos/<o>/<r>/issues/<N>/labels/code-working` (a 404 means it was not there)
+- Open a PR, ready for review: `gh api -X POST repos/<o>/<r>/pulls -f title=... -f head=claude/... -f base=main -F body=@pr.md`
 
 ## Planner procedure
 

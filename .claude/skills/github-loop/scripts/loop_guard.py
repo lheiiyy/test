@@ -40,9 +40,11 @@ def section(text, name):
 
 def decide(issue, owner, max_turn, labeled_by=None):
     labels = label_names(issue.get("labels"))
-    messages = [{"author": login(issue.get("author")), "body": issue.get("body", ""), "is_body": True}]
+    # Accept both the `gh issue view --json` shape (author) and the REST shape (user).
+    issue_author = login(issue.get("author") or issue.get("user"))
+    messages = [{"author": issue_author, "body": issue.get("body") or "", "is_body": True}]
     for c in issue.get("comments") or []:
-        messages.append({"author": login(c.get("author")), "body": c.get("body", ""), "is_body": False})
+        messages.append({"author": login(c.get("author") or c.get("user")), "body": c.get("body") or "", "is_body": False})
 
     # Count turns in order. A "type=reset" header posted by the repo owner restarts the
     # count, so Leo can let a capped thread continue by commenting
@@ -70,7 +72,7 @@ def decide(issue, owner, max_turn, labeled_by=None):
         return out("ignore", "no to-code label")
     if "code-working" in labels:
         return out("ignore", "already claimed by a running executor")
-    if login(issue.get("author")).lower() != owner.lower():
+    if issue_author.lower() != owner.lower():
         return out("ignore", "issue author is not the repo owner")
     if labeled_by and labeled_by.lower() != owner.lower():
         return out("ignore", "label was not applied by the repo owner")
@@ -101,11 +103,15 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("issue_json")
     ap.add_argument("--owner", required=True, help="login of the repo owner")
+    ap.add_argument("--comments", default=None, help="JSON array of issue comments (REST shape), if not inside the issue file")
     ap.add_argument("--max-turn", type=int, default=4)
     ap.add_argument("--labeled-by", default=None, help="login of whoever applied the label, if known")
     args = ap.parse_args()
     with open(args.issue_json, encoding="utf-8") as f:
         issue = json.load(f)
+    if args.comments:
+        with open(args.comments, encoding="utf-8") as f:
+            issue["comments"] = json.load(f)
     json.dump(decide(issue, args.owner, args.max_turn, args.labeled_by), sys.stdout, indent=2)
     print()
 

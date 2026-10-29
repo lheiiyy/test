@@ -14,6 +14,13 @@ Uses the Pro subscription, no API key, no YAML, no terminal.
 6. **Create the scheduled task** at claude.ai/code/routines. Trigger: GitHub event → Issues → labeled, filter label = `to-code`, author = the repo owner. Prompt: "Follow .claude/skills/github-loop/SKILL.md as the executor for the issue in the event."
 7. **Run one test issue** (see the live smoke test in the final hand-off message).
 
+## Alternative route: scheduled task without the GitHub App (what Leo's other repos use)
+
+The GitHub-event trigger can only be created in the claude.ai UI, and it needs the Claude GitHub App. A cron scheduled task needs neither, and can be made from chat with the scheduled-task tools:
+- **Hourly check:** a scheduled task that lists open `to-code` issues by the repo owner with `gh api` and ends with "No new work." when there are none. An idle run takes about 15 seconds. Leo's TLMI-AI tasks run hourly this way and succeed, so the "5 runs a day on Pro" limit from the launch post does not appear to be enforced.
+- **Poke-only:** a scheduled task with no schedule at all, started by `fire_trigger` right after the planner creates the issue. It costs nothing while idle, but a label added by hand in the GitHub app does not wake it.
+- Use REST (`gh api`) everywhere; GraphQL is blocked in cloud sessions.
+
 ## Optional: return path from chat
 
 - Say "check the loop" in any chat, or
