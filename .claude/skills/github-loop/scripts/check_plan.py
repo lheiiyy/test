@@ -1,0 +1,120 @@
+#!/usr/bin/env python3
+"""Check an autopilot Phase 1 plan file before it is posted.
+
+    check_plan.py <project>/docs/plan-<feature>.md --git-base origin/main
+    check_plan.py docs/plan-x.md --changed docs/plan-x.md other/file.js     (tests)
+
+Checks:
+- the five sections exist and are not empty: Business plan, Architecture,
+  Task breakdown, Test plan, Merge plan (## or ### headings, numbering optional);
+- the business plan covers problem, users, value, scope, out of scope, success
+  metrics, risks and effort; the architecture covers components, data flow, schema,
+  integration points, migration and decisions; the task breakdown has pass/fail
+  checks; the merge plan names the branch and the method;
+- the last non-empty line is exactly AWAITING APPROVAL;
+- with --git-base or --changed: the plan is the only changed file, because
+  Phase 1 makes no code changes.
+
+Prints a JSON report; exit 1 on any problem.
+"""
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+
+SECTIONS = ["Business plan", "Architecture", "Task breakdown", "Test plan", "Merge plan"]
+TOPICS = {
+    "Business plan": ["problem", "user", "value", "scope", "out of scope|out-of-scope",
+                      "success metric", "risk", "effort"],
+    "Architecture": ["component", "data flow", "schema", "integration", "migration", "decision"],
+    "Task breakdown": ["pass|fail|check"],
+    "Test plan": ["test"],
+    "Merge plan": ["branch", "method"],
+}
+HEADING = re.compile(r"^(#{2,3})\s+(.+?)\s*$", re.MULTILINE)
+
+
+def sections(text):
+    """Map each required section name to its body text (None when missing)."""
+    found = {}
+    heads = list(HEADING.finditer(text))
+    for n, h in enumerate(heads):
+        title = re.sub(r"^\d+[.)]\s*", "", h.group(2)).lower()
+        for name in SECTIONS:
+            if name.lower() in title and name not in found:
+                level = len(h.group(1))
+                end = len(text)
+                for later in heads[n + 1:]:
+                    if len(later.group(1)) <= level:
+                        end = later.start()
+                        break
+                found[name] = text[h.end():end].strip()
+    return {name: found.get(name) for name in SECTIONS}
+
+
+def changed_files_from_git(base):
+    def git(*args):
+        proc = subprocess.run(["git"] + list(args), capture_output=True, text=True)
+        if proc.returncode != 0:
+            raise RuntimeError(f"git {' '.join(args)} failed: {proc.stderr.strip()[:200]}")
+        return proc.stdout
+    top = git("rev-parse", "--show-toplevel").strip()
+    names = set(git("diff", "--name-only", base).split()) | set(git("ls-files", "--others", "--exclude-standard",
+                                                                      "--full-name", top).split())
+    return top, sorted(names)
+
+
+def check(text, plan_rel=None, changed=None):
+    problems = []
+    body = sections(text)
+    for name in SECTIONS:
+        if body[name] is None:
+            problems.append(f"missing section: {name}")
+        elif not body[name]:
+            problems.append(f"empty section: {name}")
+        else:
+            low = body[name].lower()
+            for topic in TOPICS[name]:
+                if not any(word in low for word in topic.split("|")):
+                    problems.append(f"{name} does not cover: {topic.split('|')[0]}")
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
+    if not lines or lines[-1] != "AWAITING APPROVAL":
+        problems.append('the last line must be exactly "AWAITING APPROVAL"')
+    if changed is not None:
+        others = [f for f in changed if os.path.normpath(f) != os.path.normpath(plan_rel)]
+        if others:
+            problems.append("Phase 1 must change only the plan file; also changed: " + ", ".join(others))
+        if os.path.normpath(plan_rel) not in [os.path.normpath(f) for f in changed]:
+            problems.append("the plan file is not among the changed files")
+    return {"ok": not problems, "problems": problems}
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("plan")
+    ap.add_argument("--git-base", default=None, help="compare the working tree with this ref, for example origin/main")
+    ap.add_argument("--changed", nargs="*", default=None, help="changed files, instead of asking git")
+    args = ap.parse_args()
+
+    with open(args.plan, encoding="utf-8") as f:
+        text = f.read()
+    plan_rel, changed = os.path.normpath(args.plan), args.changed
+    if args.git_base:
+        try:
+            top, changed = changed_files_from_git(args.git_base)
+        except RuntimeError as e:
+            json.dump({"ok": False, "problems": [str(e)]}, sys.stdout, indent=2)
+            print()
+            sys.exit(1)
+        plan_rel = os.path.relpath(os.path.abspath(args.plan), top)
+    report = check(text, plan_rel, changed)
+    report["changed"] = changed
+    json.dump(report, sys.stdout, indent=2)
+    print()
+    sys.exit(0 if report["ok"] else 1)
+
+
+if __name__ == "__main__":
+    main()

@@ -429,6 +429,92 @@ class LoopGhTests(unittest.TestCase):
         self.assertEqual(out["dry_run_calls"], [])
 
 
+GOOD_PLAN = """# Plan: README
+
+## 1. Business plan
+Problem: no README. Users: Leo. Value: onboarding. Scope: one file. Out of scope: the app.
+Success metrics: file exists. Risks: none. Effort estimate: 10 minutes.
+
+## 2. Architecture
+Components: one file. Data flow: none. Schema changes: none. Integration points: none.
+Migration path: none. Key decisions: plain Markdown.
+
+## 3. Task breakdown
+| # | Task | Files | Pass/fail check |
+|---|---|---|---|
+| 1 | Write README | odometer-trips/README.md | file exists |
+
+## 4. Test plan
+A test checks the file exists.
+
+## 5. Merge plan
+Branch claude/readme. Method: merge commit. Merge when the test passes.
+
+AWAITING APPROVAL
+"""
+
+
+class CheckPlanTests(unittest.TestCase):
+    def check(self, text, *extra):
+        d = tempfile.mkdtemp()
+        os.makedirs(os.path.join(d, "docs"))
+        with open(os.path.join(d, "docs", "plan-readme.md"), "w") as f:
+            f.write(text)
+        proc = subprocess.run([sys.executable, "-B", os.path.join(SCRIPTS, "check_plan.py"), "docs/plan-readme.md",
+                               *extra], capture_output=True, text=True, cwd=d)
+        return proc.returncode, json.loads(proc.stdout)
+
+    def test_good_plan_passes(self):
+        code, out = self.check(GOOD_PLAN, "--changed", "docs/plan-readme.md")
+        self.assertEqual(code, 0, out)
+
+    def test_missing_and_empty_sections(self):
+        code, out = self.check(GOOD_PLAN.replace("## 4. Test plan\nA test checks the file exists.\n", ""))
+        self.assertEqual(code, 1)
+        self.assertIn("missing section: Test plan", out["problems"])
+        code, out = self.check(GOOD_PLAN.replace("A test checks the file exists.", ""))
+        self.assertIn("empty section: Test plan", out["problems"])
+
+    def test_business_plan_topics(self):
+        code, out = self.check(GOOD_PLAN.replace("Risks: none. ", ""))
+        self.assertEqual(code, 1)
+        self.assertIn("Business plan does not cover: risk", out["problems"])
+
+    def test_final_line_must_be_exact(self):
+        for ending in ["Awaiting approval", "AWAITING APPROVAL.", "AWAITING APPROVAL\nP.S. extra"]:
+            with self.subTest(ending=ending):
+                code, out = self.check(GOOD_PLAN.replace("AWAITING APPROVAL", ending))
+                self.assertEqual(code, 1)
+
+    def test_phase_1_changes_only_the_plan(self):
+        code, out = self.check(GOOD_PLAN, "--changed", "docs/plan-readme.md", "odometer-trips/app.js")
+        self.assertEqual(code, 1)
+        self.assertTrue(any("odometer-trips/app.js" in p for p in out["problems"]))
+
+    def test_git_base_mode(self):
+        d = tempfile.mkdtemp()
+        git = ["git", "-C", d, "-c", "user.name=t", "-c", "user.email=t@t"]
+        subprocess.run(git + ["init", "-q"], check=True)
+        with open(os.path.join(d, "README.txt"), "w") as f:
+            f.write("base\n")
+        subprocess.run(git + ["add", "."], check=True)
+        subprocess.run(git + ["commit", "-qm", "base"], check=True)
+        os.makedirs(os.path.join(d, "docs"))
+        plan = os.path.join(d, "docs", "plan-readme.md")
+        with open(plan, "w") as f:
+            f.write(GOOD_PLAN)
+        script = os.path.join(SCRIPTS, "check_plan.py")
+        ok = subprocess.run([sys.executable, "-B", script, plan, "--git-base", "HEAD"], capture_output=True,
+                            text=True, cwd=d)
+        self.assertEqual(ok.returncode, 0, ok.stdout)
+        with open(os.path.join(d, "app.js"), "w") as f:
+            f.write("code\n")
+        bad = subprocess.run([sys.executable, "-B", script, plan, "--git-base", "HEAD"], capture_output=True,
+                             text=True, cwd=d)
+        self.assertEqual(bad.returncode, 1)
+        self.assertIn("app.js", bad.stdout)
+
+
 class MergeTests(unittest.TestCase):
     PR = {"state": "open", "merged": False, "draft": False, "mergeable": True, "mergeable_state": "clean",
           "head": {"ref": "claude/readme", "sha": "abc123"}, "base": {"ref": "main"}}
