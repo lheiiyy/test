@@ -15,13 +15,14 @@ The approved plan authorizes everything in it, including the merge, and nothing 
 For `continue`, read your last park comment first. If it parked a merge ("Merge needs one tap") or a release ("Ready to release"), resume at Merge step 2 or step 3 below. Otherwise continue the build or fix here with the answer in `notes`.
 
 1. Check out `claude/<slug>`, the plan PR's branch. If `main` moved, merge `origin/main` into it with a merge commit. Never rebase or force-push.
+   **Pick the model:** `python3 scripts/pick_model.py --step <build|fix> --paths <the files the plan lists> --tasks <n> --session <this task's model>` (for a fix, use `--git-range origin/main...HEAD --round <n>` instead of `--paths`). On `delegate`, a subagent with that model makes the edits and runs the tests in the checkout; you commit (one commit per task), push and post (`references/models.md`). Otherwise work inline.
 2. **Build:** implement the plan's tasks in order, one commit per task (`T<n>: <task>`), and push after each commit.
    **Fix:** fix every `[BLOCKER]` and `[MAJOR]` in the latest verdict, and fix or answer each `[MINOR]` and `[NIT]`. Never weaken or skip a test.
    **Continue:** apply the answer in the entry's `notes`.
-3. **Test** as the test plan says, and keep the output. **Debug:** find the root cause before fixing, and fix the cause, not the symptom. If the same error survives 2 fix attempts, park.
+3. **Test** as the test plan says, and keep the output. **Debug:** find the root cause before fixing, and fix the cause, not the symptom. Attempt 1 runs on the tier from the step above. If the same error survives it, run `pick_model.py --step fix --attempt 2 ...`, which escalates to opus, for attempt 2. If the error survives that too, park.
 4. **Docs:** in the plan file, replace `AWAITING APPROVAL` with `APPROVED by <owner> on <date>`, and keep a `## Status` section with the status, decisions and test results. Update any project status document the plan names. Never create a duplicate document.
 5. **PR:** retitle it to `<feature>`. The body holds the purpose, the requirements covered, the changes, the tests run with their results, known limitations, and any migration, deploy or rollback notes. Use `gh api -X PATCH repos/<o>/<r>/pulls/<P> -f title=... -F body=@pr.md`.
-6. **Write `result.md`:** the entry's `reply_header`, with the real `pr` and the pushed `head` (`git rev-parse HEAD`). Then `READY FOR REVIEW (round n)`, the test command with its result line, and, for a fix, which commit fixed each finding. 150 words or fewer.
+6. **Write `result.md`:** the entry's `reply_header`, with the real `pr` and the pushed `head` (`git rev-parse HEAD`). Then `READY FOR REVIEW (round n)`, the test command with its result line, and, for a fix, which commit fixed each finding. Add one line `Model: <tier> (<reason>)`. 150 words or fewer.
 7. Run `python scripts/loop_gh.py ready-for-review --repo <o>/<r> --issue <N> --pr <P> --file result.md --turn <next_turn>`, then stop. The Lead reviews next.
 
 ## Merge: `merge`
@@ -42,7 +43,7 @@ For `continue`, read your last park comment first. If it parked a merge ("Merge 
    - `Merged:` (with the merge commit)
    - `Deployed:`
    - `Blocked or unverified:`
-   Then list every changed file (`git diff --name-only <base>..<merge commit>`). 250 words or fewer.
+   Then one line `Model: <tier per step that ran, for example build sonnet, review opus (subagent)>`, and every changed file (`git diff --name-only <base>..<merge commit>`). 250 words or fewer.
 5. Run `python scripts/loop_gh.py finish --repo <o>/<r> --issue <N> --file summary.md --turn <next_turn>`. It labels the issue `done` and closes it.
 
 ## Merge conflicts

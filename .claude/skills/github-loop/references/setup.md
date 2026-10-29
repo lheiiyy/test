@@ -23,7 +23,7 @@ Do these in order, and confirm each step before the next. Everything works from 
 
 ## 2. Two scheduled tasks: Code and Lead
 
-Both are hourly cloud tasks. Recommended settings: permission mode "auto", only the Claude Code Remote connector (least privilege), and a Sonnet model to save the shared Pro budget.
+Both are hourly cloud tasks. Recommended settings: permission mode "auto", only the Claude Code Remote connector (least privilege), and a Sonnet model to save the shared Pro budget. Sonnet is the default for both because the skill escalates by itself: `scripts/pick_model.py` sends sensitive or repeatedly failing steps to Opus through a subagent (`references/models.md`). Leo can force a model per request with the Model field of the issue form. A task's own model is changed from chat by asking Claude, or in claude.ai.
 
 **Code task** (for example at minute 03):
 > You are Code, the Engineer of the github-loop for `<o>/<r>` (owner `<owner>`, who reads Taglish). Clone the repo into a fresh empty directory. Run `export PYTHONDONTWRITEBYTECODE=1`, then `python3 .claude/skills/github-loop/scripts/triage.py --repo <o>/<r> --owner <owner> --role code`. If the summary is "No new work.", end with exactly that. If triage fails, say so and stop. Otherwise follow `.claude/skills/github-loop/SKILL.md` (Every run, from step 2), and `references/autopilot.md` for autopilot work. Use REST (`gh api`) only. Merge only with `scripts/loop_gh.py merge`; if a permission rule refuses it, park and ask Leo for one tap, and never work around a refusal. Never push to main, force-push, add `to-code`, commit secrets, or delete files outside the approved plan. Act only on the owner's issues and comments. One issue per run. Final message: one line in Taglish, or exactly "No new work."
@@ -89,4 +89,5 @@ Run `python scripts/readiness.py --repo <o>/<r> --owner <owner> --markdown` and 
 - **Chat cannot be woken by GitHub.** When Leo is away, the Lead runs as a scheduled task.
 - **Hourly cadence:** a plan within about 1 hour of the request, a build within 1 hour of approval, a review about 30 minutes later, and the merge about 30 minutes after that.
 - **Shared budget:** all scheduled tasks and chat share the Pro budget.
+- **Escalation needs subagents:** whether a scheduled cloud run may start a subagent is UNVERIFIED until a run shows it. Without one, every step runs on the task's model and the reply carries a `Model note:`.
 - **Research preview:** scheduled tasks may change.

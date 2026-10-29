@@ -70,6 +70,19 @@ body:
         - production after my CONTINUE release
     validations:
       required: true
+  - type: dropdown
+    id: model
+    attributes:
+      label: Model (leave Auto unless you want to force one)
+      description: Auto picks the model for each step by risk, sonnet by default and opus for sensitive code. Forcing a model changes how much budget the work uses.
+      options:
+        - Auto
+        - sonnet
+        - opus
+        - haiku
+      default: 0
+    validations:
+      required: true
   - type: textarea
     id: context
     attributes:

@@ -12,6 +12,8 @@ Read this when triage gives `role: lead` work (`plan`, `revise`, `review`, or `c
 
 For a new project or system, plan with **web-app-project-planning**: in chat, its Docs artifact; in a scheduled run, its section list inside the repo plan file. For a feature, write `<project folder>/docs/plan-<slug>.md` on branch `claude/<slug>`, where the slug is the request's feature name.
 
+**Pick the model first.** Save the issue body to a file and run `python3 scripts/pick_model.py --step plan --text <file> --session <this task's model>` (`--step revise --round <n>` for a revision). On `delegate`, a subagent with that model drafts the plan file, following the sections below; you then run the checks and the posting yourself (`references/models.md`). Otherwise plan inline.
+
 1. **Inspect** the repo state, open PRs that touch the same files, existing docs, tests and CI. Reuse what works. Name the project's existing status document (its equivalent of PROJECT_STATUS.md, for example `specs/plan.md` or `docs/STATUS.md`) in the plan, so Code updates it instead of creating a new one.
 2. **Readiness.** Run `python scripts/readiness.py --repo <o>/<r> --owner <owner> --markdown`. Add `--create-labels` when labels are missing; that is an authorized setup step. Then add the project's own rows: connectors (Drive, Sheets, Apps Script), secrets, hosting, database and migrations, browser tests, and external APIs and costs.
    - Status per row: `READY`, `NEEDS SETUP`, `BLOCKED`, `NOT REQUIRED` or `UNVERIFIED`. READY needs evidence; a row you could not check is UNVERIFIED.
@@ -20,7 +22,7 @@ For a new project or system, plan with **web-app-project-planning**: in chat, it
 3. **Write the plan,** each section tight:
    1. **Business plan:** problem, users, value, scope, out of scope, success metrics, risks, effort estimate.
    2. **Architecture:** components, data flow, schema changes, integration points, migration path, and key decisions with a one-line reason each.
-   3. **Task breakdown:** ordered tasks, each with its agent (Code), the files touched and a pass/fail check. Six tasks or fewer; split a bigger request and say so under scope.
+   3. **Task breakdown:** ordered tasks, each with its agent (Code), the files touched and a pass/fail check. Six tasks or fewer; split a bigger request and say so under scope. Then add one line, `Model plan: build <tier>; review <tier> (<reason>); fix <tier>, opus on a second attempt`, from `pick_model.py` run for build, review and fix with the files the tasks touch and `--tasks <n>`. `check_plan.py` requires a tier name here.
    4. **Test plan:** what is tested, with which tooling, what "tests pass" means, and which tests cannot run in a cloud session.
    5. **Merge plan:** branch, merge method (default: merge commit), and merge conditions (an approved Lead verdict for the head, green checks, and whether CI is required). Add the **release policy**: `no deploy`, `staging automatic`, or `production after Leo's CONTINUE: release`.
    6. **Readiness:** the matrix, then one short checklist of what Leo must do by hand.
@@ -36,7 +38,7 @@ For a new project or system, plan with **web-app-project-planning**: in chat, it
 
 You did not build this change. Judge it on evidence, not on Code's claims.
 
-1. Fetch the PR branch and confirm that its head equals the entry's `head`.
+1. Fetch the PR branch and confirm that its head equals the entry's `head`. Then run `python3 scripts/pick_model.py --step review --git-range origin/main...<head> --round <n> --text <issue body file> --session <this task's model>`. On `delegate`, a subagent with that model reads the diff against the checklist below and drafts `verdict.md`; you confirm the head and a fresh test run, then post. Otherwise review inline.
 2. **Scope of the read:**
    - Round 1: the full diff, `git diff origin/main...<head>`.
    - Later rounds: `git diff <since>..<head>` and the findings still open.
@@ -55,6 +57,7 @@ You did not build this change. Judge it on evidence, not on Code's claims.
    - First line: the entry's `reply_header`, with `verdict=approved` or `verdict=changes`.
    - One bullet per finding, tagged `[BLOCKER]`, `[MAJOR]`, `[MINOR]` or `[NIT]`, with file:line, the failure scenario and the fix.
    - Then one line on what you checked, and the test command with its result line.
+   - One line `Model: <tier> (<reason>)`.
    - Last two lines: `Reviewed head <sha>`, then `VERDICT: APPROVED` or `VERDICT: CHANGES REQUESTED`.
    - Approve only with no BLOCKER or MAJOR left and the tests passing. 400 words or fewer.
 5. Run `python scripts/loop_gh.py verdict --repo <o>/<r> --issue <N> --pr <P> --file verdict.md --turn <next_turn>`. A head mismatch means Code pushed again: review the new head.

@@ -7,6 +7,7 @@
 Checks:
 - the six sections exist and are not empty: Business plan, Architecture,
   Task breakdown, Test plan, Merge plan, Readiness (## or ### headings, numbering optional);
+- the task breakdown carries a model plan: it names a tier (haiku, sonnet or opus);
 - the business plan covers problem, users, value, scope, out of scope, success
   metrics, risks and effort; the architecture covers components, data flow, schema,
   integration points, migration and decisions; the task breakdown has pass/fail
@@ -36,6 +37,7 @@ TOPICS = {
     "Merge plan": ["branch", "method", "deploy|release"],
     "Readiness": ["ready|needs setup|blocked|not required|unverified"],
 }
+TIERS = re.compile(r"\b(haiku|sonnet|opus)\b", re.IGNORECASE)
 HEADING = re.compile(r"^(#{2,3})\s+(.+?)\s*$", re.MULTILINE)
 
 
@@ -82,6 +84,9 @@ def check(text, plan_rel=None, changed=None):
             for topic in TOPICS[name]:
                 if not any(word in low for word in topic.split("|")):
                     problems.append(f"{name} does not cover: {topic.split('|')[0]}")
+            if name == "Task breakdown" and not TIERS.search(body[name]):
+                problems.append("Task breakdown has no model plan: name a tier (haiku, sonnet or opus) per step, "
+                                "from scripts/pick_model.py")
     lines = [l.strip() for l in text.splitlines() if l.strip()]
     if not lines or lines[-1] != "AWAITING APPROVAL":
         problems.append('the last line must be exactly "AWAITING APPROVAL"')
