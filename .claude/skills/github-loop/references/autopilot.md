@@ -1,65 +1,75 @@
-# Autopilot mode: plan, one approval, then build, test, debug and merge
+# Code: Claude Code as Engineer (build, fix, merge, deploy, report)
 
-Read this when a triage `work` entry has a `work_type`. The issue is Leo's request in the template format (`references/task-template.md`, or the Autopilot issue form): it has Phase 1 and Phase 2 headings. Leo's only action after filing it is one comment: `APPROVED`.
-
-Commands below run from the skill folder with `export PYTHONDONTWRITEBYTECODE=1` set. `<o>/<r>` is the repo, `<N>` the issue, `<P>` the PR.
-
-## Every run
-
-1. **Repo identity gate.** The request's repo must be the repo you are running in, and the project folder must exist (or be new because the request says so). On a mismatch: `python scripts/loop_gh.py park --repo <o>/<r> --issue <N> --turn <next_turn> --phase 1 --reason "repo mismatch: ..."`, then stop before any change.
-2. **Claim:** `python scripts/loop_gh.py claim --repo <o>/<r> --issue <N>`. Exit code 3 → stop.
-3. **Read only what is needed:** the issue, the project's `CLAUDE.md`, and the docs the request names. Do not re-read the whole codebase.
-4. **Names:** the feature slug comes from the request's feature name (lowercase, hyphens), for example `readme`. Plan path: `<project folder>/docs/plan-<slug>.md`. Branch: `claude/<slug>`.
-
-## Phase 1: `plan`, `revise`, and `continue` with phase 1
-
-1. Create `claude/<slug>` from `main`, or check out the existing branch for a revision.
-2. Write the plan file, keeping every section tight:
-   1. Business plan: problem, users, value, scope, out of scope, success metrics, risks, effort estimate.
-   2. Architecture: components, data flow, schema changes, integration points, migration path, key decisions, each with a one-line reason.
-   3. Task breakdown: ordered tasks, each with the files touched and a pass/fail check. Keep it to 6 tasks or fewer. If the request is bigger, split it and say so under scope.
-   4. Test plan: what is tested, with which tooling, and what "tests pass" means.
-   5. Merge plan: branch name, merge method (default: merge commit), and the merge conditions.
-   End with the line `AWAITING APPROVAL`. For `revise`, apply the entry's `notes`. For `continue`, use the answer in `notes`.
-3. `python scripts/check_plan.py <plan path> --git-base origin/main`. Fix it until it passes. Phase 1 changes only the plan file.
-4. Commit once (`Plan: <slug> (awaiting approval)`) and push.
-5. On the first plan, open a normal PR with REST, never a draft: drafts cannot be marked ready without GraphQL. Title: `Plan: <feature> (awaiting approval)`. Body: `Refs #<N>` and the plan path.
-6. Write `reply.md` with the entry's `reply_header` line, then at most 150 words: the plan link, the PR link, a 3-line summary, and the assumptions to confirm. End with: "Reply `APPROVED` (capitals) to build and merge, or `REVISE: <notes>`."
-7. `python scripts/loop_gh.py post-plan --repo <o>/<r> --issue <N> --file reply.md --turn <next_turn>`. Stop here. Never start Phase 2 in the same run.
-
-## Phase 2: `build`, and `continue` with phase 2
+Read this when triage gives `role: code` autopilot work: `build`, `fix`, `merge`, or `continue` with phase 2. Plans and reviews are the Lead's (`references/lead.md`). Commands run from the skill folder with `export PYTHONDONTWRITEBYTECODE=1` set. `<o>/<r>` is the repo, `<N>` the issue and `<P>` the PR.
 
 The approved plan authorizes everything in it, including the merge, and nothing beyond it.
 
-1. Check out `claude/<slug>`. If `main` moved, merge `origin/main` into the branch (a merge commit; never rebase or force-push).
-2. Re-read the plan file: it is the spec. Apply any `notes` from a `CONTINUE:`.
-3. Implement the tasks in order, one commit per task (`T<n>: <task>`), and push after each commit.
-4. Set up the test harness from the test plan, write the tests, run them, and keep the output.
-5. Debug: find the root cause before fixing, fix the cause and not the symptom, then re-run. If the same error survives 2 fix attempts, park.
-6. Update the docs before merging. In the plan file, replace the last line with `APPROVED by <owner> on <date>` and add a `## Status` section with the status, decisions and test results. Update any project docs the plan names. Commit `Docs: status and test results`.
-7. Retitle the PR to `<feature>` and add the test output to its body: `gh api -X PATCH repos/<o>/<r>/pulls/<P> -f title=... -F body=@pr.md`.
-8. Merge only through the script: `python scripts/loop_gh.py merge --repo <o>/<r> --issue <N> --pr <P> --owner <owner> --method <plan's method>`. It re-checks the owner's `APPROVED` and the PR's state, and pins the head SHA.
-   - Exit code 4 or 5: park with its reason (`--phase 2`).
-   - If a permission rule refuses the command itself: `park --phase 2 --reason "Merge needs one tap from you: <PR link>. Tap Merge, then reply CONTINUE: merged"`. Do not work around it. On the next `continue`, if the PR is already merged, go straight to step 9.
-9. Write `summary.md` with the entry's `reply_header` (type=summary phase=2), then at most 250 words: every changed file (`git diff --name-only <base>..<merge commit>`), the test command with its result line, and the PR and merge-commit links.
-10. `python scripts/loop_gh.py finish --repo <o>/<r> --issue <N> --file summary.md --turn <next_turn>`. This labels the issue `done` and closes it.
+## Every run
 
-## Stop and ask (park with `--phase` and one batched question)
+1. **Repo identity gate.** The repo and project folder must match the request. If they do not, run `park --phase 2` with the reason, and stop before any change.
+2. **Claim:** `python scripts/loop_gh.py claim --repo <o>/<r> --issue <N>`. Exit code 3 → stop.
+3. **Read only:** the plan file (it is the spec), the issue, the project's `CLAUDE.md` and the files the plan names. For a fix, also read the latest verdict.
 
-- Anything must change outside the approved plan (scope, schema, architecture).
-- A fix needs a new dependency or an external service.
+## Build, fix, or `continue` with phase 2
+
+For `continue`, read your last park comment first. If it parked a merge ("Merge needs one tap") or a release ("Ready to release"), resume at Merge step 2 or step 3 below. Otherwise continue the build or fix here with the answer in `notes`.
+
+1. Check out `claude/<slug>`, the plan PR's branch. If `main` moved, merge `origin/main` into it with a merge commit. Never rebase or force-push.
+2. **Build:** implement the plan's tasks in order, one commit per task (`T<n>: <task>`), and push after each commit.
+   **Fix:** fix every `[BLOCKER]` and `[MAJOR]` in the latest verdict, and fix or answer each `[MINOR]` and `[NIT]`. Never weaken or skip a test.
+   **Continue:** apply the answer in the entry's `notes`.
+3. **Test** as the test plan says, and keep the output. **Debug:** find the root cause before fixing, and fix the cause, not the symptom. If the same error survives 2 fix attempts, park.
+4. **Docs:** in the plan file, replace `AWAITING APPROVAL` with `APPROVED by <owner> on <date>`, and keep a `## Status` section with the status, decisions and test results. Update any project status document the plan names. Never create a duplicate document.
+5. **PR:** retitle it to `<feature>`. The body holds the purpose, the requirements covered, the changes, the tests run with their results, known limitations, and any migration, deploy or rollback notes. Use `gh api -X PATCH repos/<o>/<r>/pulls/<P> -f title=... -F body=@pr.md`.
+6. **Write `result.md`:** the entry's `reply_header`, with the real `pr` and the pushed `head` (`git rev-parse HEAD`). Then `READY FOR REVIEW (round n)`, the test command with its result line, and, for a fix, which commit fixed each finding. 150 words or fewer.
+7. Run `python scripts/loop_gh.py ready-for-review --repo <o>/<r> --issue <N> --pr <P> --file result.md --turn <next_turn>`, then stop. The Lead reviews next.
+
+## Merge: `merge`
+
+1. Run `python scripts/loop_gh.py merge --repo <o>/<r> --issue <N> --pr <P> --owner <owner> --method <the plan's method>`. Add `--require-checks` when the plan requires CI.
+   - Exit code 4, 5 or 6: park with the reason it gives (`--phase 2`).
+   - If a permission rule refuses the command itself: park with the reason "Merge needs one tap from you: <PR link>. Tap Merge, then reply CONTINUE: merged". Never work around a refusal. On the next `continue`, if the PR is already merged, go straight to step 2.
+2. Run `python scripts/loop_gh.py verify --repo <o>/<r> --issue <N> --pr <P>`. It must report `on_base: true`. Note the post-merge checks it lists.
+3. **Deploy only as the plan's release policy says.**
+   - `no deploy`: skip this step.
+   - `staging automatic`: deploy through the authorized workflow, then verify the deployment separately (its URL, health or smoke check).
+   - `production after Leo's CONTINUE: release`: park with "Ready to release <merge sha>: reply CONTINUE: release".
+   - Apps Script projects: clasp is not available in cloud runs, so report the deploy as a manual step for Leo.
+   - Never claim a deployment without evidence.
+4. **Write `summary.md`:** the entry's `reply_header`, then five lines, each one true and backed by evidence:
+   - `Implemented and tested:`
+   - `Reviewed:`
+   - `Merged:` (with the merge commit)
+   - `Deployed:`
+   - `Blocked or unverified:`
+   Then list every changed file (`git diff --name-only <base>..<merge commit>`). 250 words or fewer.
+5. Run `python scripts/loop_gh.py finish --repo <o>/<r> --issue <N> --file summary.md --turn <next_turn>`. It labels the issue `done` and closes it.
+
+## Merge conflicts
+
+1. Inspect both sides and find the intended behavior.
+2. Keep all valid work, and never drop an unrelated change silently.
+3. Re-run the affected tests.
+4. A resolution that materially changes the reviewed code goes back to review with `ready-for-review`.
+5. A conflict in files outside the plan → park.
+
+## Stop and ask (park with one batched question)
+
+- Anything outside the approved plan must change (scope, schema, architecture).
+- A fix needs a new dependency, an external service or a cost.
 - The same error survives 2 fix attempts.
 - A merge conflict touches files outside the plan.
 - The repo identity gate fails.
+- A required approval or permission cannot be satisfied.
+- A production release needs Leo.
+- A destructive operation lacks safeguards.
 
-Also: never commit secrets (API keys, clasp credentials, tokens), never force-push or rewrite history, and never delete files or data outside the plan.
+**Never:** commit secrets (API keys, clasp credentials, tokens), force-push, rewrite history, delete files or data outside the plan, bypass branch protection or reviews, merge with failing checks, or report success that you did not verify.
 
-## What Leo types (say this in every plan reply and park)
+## What Leo types
 
 | Comment, at the very start and in capitals | Effect |
 |---|---|
-| `APPROVED` | Build, test, debug and merge the latest plan |
-| `REVISE: <notes>` | Rewrite the plan (up to 3 times) |
-| `CONTINUE: <answer>` | Answer a parked question and resume the parked phase |
-
-Only the repo owner's comments count. Leo never has to touch a label.
+| `APPROVED` | Approves the latest plan (Code builds; the Lead reviews; Code merges) |
+| `REVISE: <notes>` | The Lead rewrites the plan (up to 3 times) |
+| `CONTINUE: <answer>` | Resumes the parked phase with his answer |
