@@ -2079,7 +2079,9 @@ class PackageTests(unittest.TestCase):
                      "github-loop/scripts/init_repo.py", "github-loop/references/templates/code-task.md",
                      "github-loop/references/templates/lead-task.md",
                      "github-loop/references/templates/autopilot-issue-form.yml",
-                     "github-loop/references/experts/registry.json", "github-loop/references/lead.md"):
+                     "github-loop/references/experts/registry.json", "github-loop/references/lead.md",
+                     "github-loop/scripts/selfcheck.py", "github-loop/references/web-apps.md",
+                     "github-loop/references/experts/appsscript.md", "github-loop/references/templates/tests.yml"):
             self.assertIn(must, names)
         self.assertFalse(any("/evals/" in n or n.endswith(".pyc") or "__pycache__" in n for n in names))
 
@@ -2255,6 +2257,72 @@ class InitRepoTests(unittest.TestCase):
                            "--stack", 'He said "go": yes')
         self.assertEqual(code, 0)
         self.assertIn('value: "He said \\"go\\": yes"', self.read(".github/ISSUE_TEMPLATE/autopilot.yml"))
+
+
+class SelfCheckTests(unittest.TestCase):
+    """scripts/selfcheck.py: a copy of the skill that lacks something the docs name fails before a run."""
+    SCRIPT = os.path.join(SCRIPTS, "selfcheck.py")
+
+    def tmp(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        return d
+
+    def copy(self):
+        dest = os.path.join(self.tmp(), "skill")
+        shutil.copytree(SKILL_DIR, dest, ignore=shutil.ignore_patterns("evals", "__pycache__", "*.pyc"))
+        return dest
+
+    def test_this_copy_is_complete(self):
+        code, out, err = run(self.SCRIPT)
+        self.assertEqual((code, out["ok"], out["missing"], out["problems"]), (0, True, [], []), err)
+        self.assertGreater(out["checked"]["scripts"], 5)
+
+    def test_a_copy_without_a_named_script_or_reference_fails(self):
+        dest = self.copy()
+        os.remove(os.path.join(dest, "scripts", "route.py"))
+        os.remove(os.path.join(dest, "references", "lead.md"))
+        code, out, _ = run(self.SCRIPT, "--dir", dest)
+        self.assertEqual((code, out["ok"]), (1, False))
+        self.assertIn("scripts/route.py", out["missing"])
+        self.assertIn("references/lead.md", out["missing"])
+        self.assertIn("next", out)
+
+    def test_a_skill_md_saved_alone_fails(self):
+        d = self.tmp()
+        shutil.copy(os.path.join(SKILL_DIR, "SKILL.md"), d)
+        code, out, _ = run(self.SCRIPT, "--dir", d)
+        self.assertEqual((code, out["ok"]), (1, False))
+        self.assertIn("scripts/loop_gh.py", out["missing"])
+
+    def test_an_older_loop_gh_without_a_named_command_fails(self):
+        dest = self.copy()
+        path = os.path.join(dest, "scripts", "loop_gh.py")
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+        self.assertIn('"reopen": cmd_reopen', text)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text.replace('"reopen": cmd_reopen', '"reopen_old": cmd_reopen'))
+        code, out, _ = run(self.SCRIPT, "--dir", dest)
+        self.assertEqual((code, out["ok"]), (1, False))
+        self.assertIn("loop_gh.py reopen", out["missing"])
+
+    def test_a_folder_without_skill_md_is_exit_2(self):
+        code, out, _ = run(self.SCRIPT, "--dir", self.tmp())
+        self.assertEqual((code, out["ok"]), (2, False))
+
+
+class WebAppExpertTests(unittest.TestCase):
+    def ids(self, report):
+        return [e["id"] for e in report["experts"]]
+
+    def test_a_gs_file_or_an_apps_script_request_routes_to_the_apps_script_note(self):
+        self.assertIn("appsscript", self.ids(rt.route("build", ["src/Code.gs", "tests/unit/a.test.mjs"])))
+        goal = "## Objective\nBuild an Apps Script tracker on Google Sheets.\n"
+        self.assertIn("appsscript", self.ids(rt.route("plan", text=goal)))
+
+    def test_a_note_named_after_it_is_not_an_apps_script_change(self):
+        self.assertNotIn("appsscript", self.ids(rt.route("build", ["src/app.js", "docs/appsscript.md"])))
 
 
 if __name__ == "__main__":

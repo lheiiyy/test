@@ -2,6 +2,15 @@
 
 Each adopted change is its own PR with one line here. After its PR is merged, tag the merge commit `github-loop-<date>` (for example `github-loop-2026-10-29`), so the runbook can roll back to it.
 
+## 2026-10-30 (later): install check, web-app support, setup rewrite
+
+- `scripts/selfcheck.py`: a static check that every script, reference and `loop_gh.py` command the docs name exists in this copy. SKILL.md tells a session to run it first, so an account copy saved from SKILL.md alone (or an old `scripts/` folder under a new SKILL.md) is caught before a run, not during one.
+- Web apps: `references/web-apps.md` (the path from chat planning to loop slices, what runs where, how to make a plan loop-ready), the `appsscript` expert note (mock transport, repository layer, manual deploy steps) in the registry, and design and proof rules in `experts/frontend.md` (design tokens, and screenshots at 1280, 768 and 375 px that the reviewer must open). `lead.md` and `autopilot.md` follow: the screenshots folder is part of `Files in scope:`, and an Apps Script deploy is a manual step with listed steps.
+- The starter `CLAUDE.md` gains a Design section and the Apps Script test rule.
+- `references/templates/tests.yml` is the CI template, and `.github/workflows/tests.yml` runs the loop's tests on every pull request.
+- `setup.md` is rewritten as one ordered path with a "You should see" check after each step, a zip install step and a CI step. Removed: the GitHub App trigger route and the `claude-code-action` fallback (both untested; the event-trigger work replaces them), and the `to-chat` label row (no tool creates that label).
+- No change to the merge gate, the approval rules or the risk rules. Classic mode is removed in a separate PR.
+
 ## 2026-10-30: portable setup for other projects
 
 - `scripts/init_repo.py`: one command sets up a new repository. It writes `.github/github-loop.json`, the Autopilot issue form and a starter `CLAUDE.md` (never over an existing file without `--force`), installs the skill with `--install-skill`, creates the labels with `--create-labels`, and prints the Code, Lead and Lead Deep task prompts with `--prompts`. `--dry-run` writes nothing.
