@@ -11,7 +11,7 @@ Read this when triage gives `role: lead` work (`plan`, `revise`, `review`, or `c
 
 ## Plan: `plan`, `revise`, and `continue` with phase 1
 
-For a new project or system, plan with **web-app-project-planning**: in chat, its Docs artifact; in a scheduled run, its section list inside the repo plan file. For a feature, write `<project folder>/docs/plan-<slug>.md` on branch `claude/<slug>`, where the slug is the request's feature name.
+For a new project or system, plan with **web-app-project-planning**: in chat, its Docs artifact; in a scheduled run, its section list inside the repo plan file. For a web app, internal tool or portal, also read `references/web-apps.md`. For a feature, write `<project folder>/docs/plan-<slug>.md` on branch `claude/<slug>`, where the slug is the request's feature name.
 
 **Route first.** Save the issue body to a file and run `python3 scripts/route.py --step plan --text <file> --session <this task's model>` (`--step revise --round <n>` for a revision; the entry's `round` is the number). Read only the expert notes it lists. Its `risk` is the floor for the plan's `Risk:` line (raise it for sensitive data or destructive steps a file name cannot show; never lower it). Its `model` part is the `pick_model.py` answer: on `delegate`, a subagent with that model drafts the plan file and you run the checks and the posting yourself (`references/models.md`); otherwise plan inline. Keep the `model_line` that is true for the reply. If the entry has a `tier_note`, the work waited for a stronger task that never came: do it at your own tier and use the `inline` line.
 
@@ -25,7 +25,7 @@ For a new project or system, plan with **web-app-project-planning**: in chat, it
    2. **Architecture:** components, data flow, schema changes, integration points, migration path, and key decisions with a one-line reason each.
    3. **Task breakdown:** ordered tasks, each with its agent (Code), the files touched and a pass/fail check. Six tasks or fewer; split a bigger request and say so under scope. Then add one line, `Model plan: build <tier>; review <tier> (<reason>); fix <tier>, opus on a second attempt`, from `pick_model.py` run for build, review and fix with the files the tasks touch and `--tasks <n>`. `check_plan.py` requires a tier name here.
    4. **Test plan:** what is tested, with which tooling, what "tests pass" means, and which tests cannot run in a cloud session.
-   5. **Merge plan:** branch, merge method (default: merge commit), merge conditions (an approved Lead verdict for the head, green checks), and three lines on their own: `Risk: low|normal|high` (high: the owner merges), `CI required: yes|no`, and `Files in scope: <folders/ and files>`. The scope lists every folder (ending in `/`) or file the tasks touch, plus this plan file and the status document Code updates. A changed file outside it makes the merge wait for the owner, so keep it real: `*` is refused. Add the **release policy**: `no deploy`, `staging automatic`, or `production after the owner's CONTINUE: release`.
+   5. **Merge plan:** branch, merge method (default: merge commit), merge conditions (an approved Lead verdict for the head, green checks), and three lines on their own: `Risk: low|normal|high` (high: the owner merges), `CI required: yes|no`, and `Files in scope: <folders/ and files>`. The scope lists every folder (ending in `/`) or file the tasks touch, plus this plan file, the status document Code updates and, when a screen changes, the screenshots folder. A changed file outside it makes the merge wait for the owner, so keep it real: `*` is refused. Add the **release policy**: `no deploy`, `staging automatic`, or `production after the owner's CONTINUE: release`.
    6. **Readiness:** the matrix, then one short checklist of what the owner must do by hand.
    End the file with the line `AWAITING APPROVAL`. Do not call the workflow fully automated while an essential row is BLOCKED or UNVERIFIED.
 4. Run `python scripts/check_plan.py <plan path> --git-base origin/main` and fix it until it passes. Phase 1 changes only the plan file (`post-plan` runs the same check again).
@@ -51,7 +51,7 @@ You did not build this change. Judge it on evidence, not on Code's claims.
    - Requirements and acceptance criteria covered.
    - Only files the plan lists are changed.
    - Correctness and no regressions.
-   - A test for each task, and the tests pass when you run them fresh. Add Playwright at 1280, 768 and 375 px when a screen changed.
+   - A test for each task, and the tests pass when you run them fresh. When a screen changed, run Playwright at 1280, 768 and 375 px and open the committed screenshots (`references/experts/frontend.md`); cite one per screen.
    - CI state on the head.
    - Security: no secrets, sheet or script IDs, PINs, tokens, e-mail addresses or real staff names, and no access made wider.
    - Database and integration risks.
