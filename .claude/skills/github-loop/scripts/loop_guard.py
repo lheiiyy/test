@@ -5,14 +5,15 @@ Deterministic and offline. Reads an issue JSON file (REST shape, or the older
 `gh issue view --json` shape) plus its comments and prints one JSON object with
 action = proceed | needs-leo | ignore.
 
-Two modes, picked from the issue body:
-- classic: a chat-written task with ## Goal and ## Acceptance criteria. Turn cap 4.
-- autopilot: the request has "Phase 1" and "Phase 2" headings (## or ###).
-  A proceed result carries work_type, phase and role:
+One mode: autopilot. A request has "Phase 1" and "Phase 2" headings (## or ###).
+A proceed result carries work_type, phase and role:
     lead (Cowork, Technical Lead): plan, revise, review, continue (phase 1)
     code (Claude Code, Engineer):   build, fix, merge, continue (phase 2)
+An issue without those headings is not a request the loop can plan. If the owner labels it `to-code`,
+the result is needs-leo (mode not-autopilot) so Code parks it once with a note on how to file it; every
+other label state is ignored.
 
-Who may say what (autopilot):
+Who may say what:
 - The owner (the repo owner's login, or "owner" in .github/github-loop.json), at the very start of a comment and
   in capitals: `APPROVED`, `REVISE: <notes>`, `CONTINUE: <answer>`.
 - Agents post from the owner's account too, but every agent comment starts with a
@@ -68,13 +69,6 @@ def headers(text):
 def first_header(text):
     m = HEADER.match((text or "").lstrip())
     return fields_of(m.group(1)) if m else None
-
-
-def section(text, name):
-    """Return the non-empty text under a '## name' heading, or ''."""
-    pattern = r"^##\s*" + re.escape(name) + r"\s*$(.*?)(?=^##\s|\Z)"
-    m = re.search(pattern, text or "", re.IGNORECASE | re.MULTILINE | re.DOTALL)
-    return m.group(1).strip() if m else ""
 
 
 def is_autopilot(body):
@@ -227,17 +221,21 @@ def review_status(issue, owner, head_sha, pr=None):
     return {"approved": True, "reason": "Lead approved this exact head"}
 
 
-def decide_classic(issue, owner, max_turn, labeled_by=None):
+NOT_AUTOPILOT = ("this issue has no Phase 1 and Phase 2 headings, so the loop cannot plan it: file the request with "
+                 "the Autopilot issue form (references/task-template.md), or add the two headings and the to-code "
+                 "label again")
+
+
+def decide_not_autopilot(issue, owner, labeled_by=None):
+    """An issue without Phase 1 and Phase 2 headings is never planned or built. The owner's `to-code` label on one
+    gets a single answer (Code parks it with NOT_AUTOPILOT), not a silent skip; every other state is ignored."""
     labels = label_names(issue.get("labels"))
     issue_author = login(issue.get("author") or issue.get("user"))
-    msgs = thread(issue)
-    current = count_turns(msgs, owner)
-    result = {"mode": "classic", "role": "code", "current_turn": current, "next_turn": current + 1}
+    current = count_turns(thread(issue), owner)
+    result = {"mode": "not-autopilot", "role": "code", "current_turn": current, "next_turn": current + 1}
 
     def out(action, reason):
         result.update(action=action, reason=reason)
-        if action == "proceed":
-            result["reply_header"] = f"<!-- loop:v1 from=code type=result turn={current + 1} -->"
         return result
 
     if labels & {"needs-leo", "done"}:
@@ -245,31 +243,12 @@ def decide_classic(issue, owner, max_turn, labeled_by=None):
     if "to-code" not in labels:
         return out("ignore", "no to-code label")
     if "code-working" in labels:
-        return out("ignore", "already claimed by a running executor")
+        return out("ignore", "already claimed by a running agent")
     if issue_author.lower() != owner.lower():
         return out("ignore", "issue author is not the repo owner")
     if labeled_by and labeled_by.lower() != owner.lower():
         return out("ignore", "label was not applied by the repo owner")
-    if current >= max_turn:
-        return out("needs-leo", f"turn cap reached ({current} of {max_turn}); a human should review this thread")
-
-    # The latest task written by the chat side (or the pasted issue body).
-    task_messages, chat_text = [], ""
-    for m in msgs:
-        hs = headers(m["body"])
-        if hs:
-            if any(h.get("from") == "chat" and h.get("type") == "task" for h in hs):
-                task_messages.append(m["body"])
-                chat_text += "\n" + m["body"]
-        elif m["is_body"]:
-            task_messages.append(m["body"])
-            chat_text += "\n" + m["body"]
-    latest = task_messages[-1] if task_messages else ""
-    if not section(latest, "Goal"):
-        return out("needs-leo", "the latest task has no Goal section; ask instead of guessing")
-    if not section(chat_text, "Acceptance criteria"):
-        return out("needs-leo", "no Acceptance criteria anywhere in the thread; ask instead of guessing")
-    return out("proceed", "all guards passed")
+    return out("needs-leo", NOT_AUTOPILOT)
 
 
 def decide_autopilot(issue, owner, labeled_by=None, max_replies=20, max_revisions=3, max_review_rounds=4):
@@ -372,10 +351,10 @@ def decide_autopilot(issue, owner, labeled_by=None, max_replies=20, max_revision
     return out("ignore", "no loop label")
 
 
-def decide(issue, owner, max_turn=4, labeled_by=None, max_replies=20, max_revisions=3, max_review_rounds=4):
+def decide(issue, owner, labeled_by=None, max_replies=20, max_revisions=3, max_review_rounds=4):
     if is_autopilot(issue.get("body")):
         return decide_autopilot(issue, owner, labeled_by, max_replies, max_revisions, max_review_rounds)
-    return decide_classic(issue, owner, max_turn, labeled_by)
+    return decide_not_autopilot(issue, owner, labeled_by)
 
 
 def main():
@@ -383,10 +362,9 @@ def main():
     ap.add_argument("issue_json")
     ap.add_argument("--owner", required=True, help="login of the repo owner")
     ap.add_argument("--comments", default=None, help="JSON array of issue comments (REST shape), if not inside the issue file")
-    ap.add_argument("--max-turn", type=int, default=4, help="classic mode turn cap")
-    ap.add_argument("--max-replies", type=int, default=20, help="autopilot agent reply cap")
-    ap.add_argument("--max-revisions", type=int, default=3, help="autopilot plan revision cap")
-    ap.add_argument("--max-review-rounds", type=int, default=4, help="autopilot change-request cap")
+    ap.add_argument("--max-replies", type=int, default=20, help="agent reply cap")
+    ap.add_argument("--max-revisions", type=int, default=3, help="plan revision cap")
+    ap.add_argument("--max-review-rounds", type=int, default=4, help="change-request cap")
     ap.add_argument("--labeled-by", default=None, help="login of whoever applied the label, if known")
     args = ap.parse_args()
     with open(args.issue_json, encoding="utf-8") as f:
@@ -394,8 +372,7 @@ def main():
     if args.comments:
         with open(args.comments, encoding="utf-8") as f:
             issue["comments"] = json.load(f)
-    result = decide(issue, args.owner, args.max_turn, args.labeled_by, args.max_replies, args.max_revisions,
-                    args.max_review_rounds)
+    result = decide(issue, args.owner, args.labeled_by, args.max_replies, args.max_revisions, args.max_review_rounds)
     json.dump(result, sys.stdout, indent=2)
     print()
 

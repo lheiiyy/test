@@ -10,8 +10,8 @@ idle scheduled run costs almost no tokens: if `work` is empty, the run just says
 
 --owner defaults to "owner" in .github/github-loop.json, else the user who owns the repo.
 
---role code  the Engineer: build, fix, merge, continue (phase 2), classic tasks. It also
-             parks needs_leo and stale entries.
+--role code  the Engineer: build, fix, merge, continue (phase 2). It also parks needs_leo and
+             stale entries.
 --role lead  the Technical Lead (Cowork): plan, revise, review, continue (phase 1).
 --role all   both (one session doing every role; avoid it when a separate Lead task exists,
              because a review should come from a different session than the build).
@@ -24,9 +24,10 @@ idle scheduled run costs almost no tokens: if `work` is empty, the run just says
 
 Prints one JSON object:
   work       issues for this role that passed every guard (oldest first), each with
-             next_turn and reply_header. Autopilot entries also carry work_type, phase,
-             role, notes, and for review, fix and merge the pr and head.
-  needs_leo  issues the guard parked (caps; missing Goal or Acceptance criteria)
+             next_turn, reply_header, work_type, phase, role, notes, and for review, fix and
+             merge the pr and head.
+  needs_leo  issues the guard parked: a cap was reached, or the owner put `to-code` on an issue
+             that has no Phase 1 and Phase 2 headings (such an entry has no phase)
   reopen     closed issues the owner answered with APPROVED, REVISE: or CONTINUE: ("Close with
              comment" was tapped); run `loop_gh.py reopen`, then run triage again
   deferred   work that needs a stronger model than --max-tier; another task takes it
@@ -104,8 +105,7 @@ def tier_of(item, issue, repo, fixtures):
     return report["tier"], report["reasons"][0] + caveat
 
 
-def reopen_candidates(repo, owner, max_turn, now, fixtures, reopen_hours, max_replies, max_revisions,
-                      max_review_rounds):
+def reopen_candidates(repo, owner, now, fixtures, reopen_hours, max_replies, max_revisions, max_review_rounds):
     """Closed autopilot issues where the owner's keyword is the next event. 'Close with comment' closes the
     issue along with the comment, and the loop only scans open issues, so without this the approval is never
     seen. Closed as 'not planned' means the owner abandoned it, and finished issues carry `done`; both are left
@@ -124,22 +124,22 @@ def reopen_candidates(repo, owner, max_turn, now, fixtures, reopen_hours, max_re
         number = issue["number"]
         issue = dict(issue, comments=fetch(f"repos/{repo}/issues/{number}/comments", fixtures,
                                            f"{number}.comments.json"))
-        decision = decide(issue, owner, max_turn, None, max_replies, max_revisions, max_review_rounds)
+        decision = decide(issue, owner, None, max_replies, max_revisions, max_review_rounds)
         if decision["action"] == "proceed":
             found.append({"number": number, "title": issue.get("title", ""), "would_run": decision.get("work_type"),
                           "reason": "closed with the owner's keyword as the newest comment"})
     return found
 
 
-def triage(repo, owner, max_turn, stale_minutes, now, fixtures, build_stale_minutes=180,
+def triage(repo, owner, stale_minutes, now, fixtures, build_stale_minutes=180,
            max_replies=20, max_revisions=3, role="code", max_review_rounds=4,
            max_tier=None, min_tier=None, defer_minutes=120, stall_minutes=180, reopen_hours=48):
     issues = fetch(f"repos/{repo}/issues?state=open", fixtures, "issues.json")
     result = {"repo": repo, "owner": owner, "role": role, "work": [], "needs_leo": [], "stale": [], "ignored": [],
               "reopen": [], "deferred": [], "stalled": []}
     parks = role in ("code", "all")
-    result["reopen"] = reopen_candidates(repo, owner, max_turn, now, fixtures, reopen_hours, max_replies,
-                                         max_revisions, max_review_rounds)
+    result["reopen"] = reopen_candidates(repo, owner, now, fixtures, reopen_hours, max_replies, max_revisions,
+                                         max_review_rounds)
 
     for issue in sorted(issues, key=lambda i: i["number"]):
         if "pull_request" in issue:
@@ -163,7 +163,7 @@ def triage(repo, owner, max_turn, stale_minutes, now, fixtures, build_stale_minu
             started = parse_time(claim["created_at"]) if claim else parse_time(issue["updated_at"])
             minutes = int((now - started).total_seconds() // 60)
             if minutes >= limit and parks:
-                turn_info = decide(issue, owner, max_turn)
+                turn_info = decide(issue, owner)
                 result["stale"].append({"number": number, "title": issue.get("title", ""), "minutes": minutes,
                                         "next_turn": turn_info["next_turn"], "phase": 2 if building else 1})
             else:
@@ -172,7 +172,7 @@ def triage(repo, owner, max_turn, stale_minutes, now, fixtures, build_stale_minu
 
         event = latest_label_event(events, "to-code") if "to-code" in labels else None
         labeled_by = ((event or {}).get("actor") or {}).get("login")
-        decision = decide(issue, owner, max_turn, labeled_by, max_replies, max_revisions, max_review_rounds)
+        decision = decide(issue, owner, labeled_by, max_replies, max_revisions, max_review_rounds)
         entry = {"number": number, "title": issue.get("title", ""), "labeled_by": labeled_by, "mode": decision["mode"]}
         if decision["action"] == "proceed":
             waited = minutes_since(issue.get("updated_at"), now)
@@ -208,8 +208,10 @@ def triage(repo, owner, max_turn, stale_minutes, now, fixtures, build_stale_minu
             result["work"].append(item)
         elif decision["action"] == "needs-leo":
             target = result["needs_leo"] if parks else result["ignored"]
-            target.append(dict(entry, next_turn=decision["next_turn"], reason=decision["reason"],
-                               phase=decision.get("phase", 1)))
+            parked = dict(entry, next_turn=decision["next_turn"], reason=decision["reason"])
+            if decision.get("phase"):  # a request that is not autopilot has no phase to resume
+                parked["phase"] = decision["phase"]
+            target.append(parked)
         else:
             result["ignored"].append(dict(entry, reason=decision["reason"]))
 
@@ -236,12 +238,11 @@ def main():
     ap.add_argument("--owner", default=None, help="login of the owner (default: config, then the repo's owner)")
     ap.add_argument("--config", default=None, help="settings file (default .github/github-loop.json)")
     ap.add_argument("--role", choices=("code", "lead", "all"), default="code")
-    ap.add_argument("--max-turn", type=int, default=4, help="classic mode turn cap")
     ap.add_argument("--stale-minutes", type=int, default=90)
-    ap.add_argument("--build-stale-minutes", type=int, default=180, help="stale limit for approved autopilot builds")
-    ap.add_argument("--max-replies", type=int, default=20, help="autopilot agent reply cap")
-    ap.add_argument("--max-revisions", type=int, default=3, help="autopilot plan revision cap")
-    ap.add_argument("--max-review-rounds", type=int, default=4, help="autopilot change-request cap")
+    ap.add_argument("--build-stale-minutes", type=int, default=180, help="stale limit for approved builds")
+    ap.add_argument("--max-replies", type=int, default=20, help="agent reply cap")
+    ap.add_argument("--max-revisions", type=int, default=3, help="plan revision cap")
+    ap.add_argument("--max-review-rounds", type=int, default=4, help="change-request cap")
     ap.add_argument("--max-tier", choices=("haiku", "sonnet", "opus"), default=None,
                     help="the model this task runs on; stronger-tier work is deferred to another task")
     ap.add_argument("--min-tier", choices=("haiku", "sonnet", "opus"), default=None,
@@ -261,7 +262,7 @@ def main():
         cfg = loop_config.load(args.config)
         set_owner_associations(cfg["owner_associations"])
         owner = loop_config.resolve_owner(args.repo, args.owner, cfg, args.fixtures)
-        result = triage(args.repo, owner, args.max_turn, args.stale_minutes, now, args.fixtures,
+        result = triage(args.repo, owner, args.stale_minutes, now, args.fixtures,
                         args.build_stale_minutes, args.max_replies, args.max_revisions, args.role,
                         args.max_review_rounds, args.max_tier, args.min_tier, args.defer_minutes,
                         args.stall_minutes, args.reopen_hours)

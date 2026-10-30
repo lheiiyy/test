@@ -2,6 +2,13 @@
 
 Each adopted change is its own PR with one line here. After its PR is merged, tag the merge commit `github-loop-<date>` (for example `github-loop-2026-10-29`), so the runbook can roll back to it.
 
+## 2026-10-30 (last): classic mode removed
+
+- Removed: the classic chat-to-Code flow (an issue without Phase 1 and Phase 2 headings, one build, no plan approval, no scripted merge, a turn cap of 4). It sat outside the plan-approval and merge-gate rules and no live task used it. Gone with it: its reference file, the `reply` command of `loop_gh.py`, the `to-chat` label, the `--max-turn` option of `triage.py` and `loop_guard.py`, and the `status` reply type and `from=chat` header.
+- Changed: a `to-code` label on an issue without the two headings used to start a classic build. Now triage lists it under `needs_leo` and Code parks it once with a note on how to file the request (the Autopilot issue form); the parked issue is then left alone. That entry has no `phase`, so its `park` takes no `--phase`.
+- `loop_guard.decide()` and `triage.triage()` no longer take a `max_turn` argument.
+- No change to the merge gate, the approval rules or the risk rules. The two live scheduled tasks pass only `--repo`, `--owner` and `--role` to triage, so they need no edit.
+
 ## 2026-10-30 (later): install check, web-app support, setup rewrite
 
 - `scripts/selfcheck.py`: a static check that every script, reference and `loop_gh.py` command the docs name exists in this copy. SKILL.md tells a session to run it first, so an account copy saved from SKILL.md alone (or an old `scripts/` folder under a new SKILL.md) is caught before a run, not during one.

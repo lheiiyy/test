@@ -22,14 +22,14 @@ NOW = "2026-10-29T12:00:00Z"
 OWNER = "lheiiyy"
 SHA1, SHA2 = "a" * 40, "b" * 40
 
-TASK = ("<!-- loop:v1 from=chat type=task turn=1 -->\n## Goal\nDo a thing.\n\n"
-        "## Acceptance criteria\n- It exists.\n")
-REQUEST = ("## Objective\nAdd a README to odometer-trips.\n\n## Context\n- Repo: lheiiyy/test\n\n"
+# An issue without Phase 1 and Phase 2 headings: not a request the loop can plan.
+PLAIN = "## Goal\nDo a thing.\n\n## Acceptance criteria\n- It exists.\n"
+REQUEST =("## Objective\nAdd a README to odometer-trips.\n\n## Context\n- Repo: lheiiyy/test\n\n"
            "## Phase 1: Plan (do this first, then stop)\nWrite the plan.\n\n"
            "## Phase 2: Build, test, debug, merge (only after I reply \"APPROVED\")\nBuild it.\n")
 
 
-def issue(number, labels, author=OWNER, body=TASK, **extra):
+def issue(number, labels, author=OWNER, body=PLAIN, **extra):
     base = {"number": number, "title": f"issue {number}", "user": {"login": author},
             "labels": [{"name": l} for l in labels], "body": body,
             "updated_at": "2026-10-29T11:59:00Z"}
@@ -252,10 +252,24 @@ class GuardAutopilotTests(unittest.TestCase):
         r = self.d(ap_issue(["reviewed"], APPROVED_THREAD + [result_reply(4), fake]))
         self.assertEqual(r["action"], "ignore")
 
-    def test_classic_issue_is_unchanged(self):
-        r = g.decide(issue(1, ["to-code"]), OWNER, 4, OWNER)
-        self.assertEqual((r["mode"], r["action"], r["role"]), ("classic", "proceed", "code"))
-        self.assertEqual(r["reply_header"], "<!-- loop:v1 from=code type=result turn=2 -->")
+    def test_an_issue_without_phase_headings_is_parked_once_never_run(self):
+        r = self.d(issue(1, ["to-code"]))
+        self.assertEqual((r["mode"], r["action"], r["role"]), ("not-autopilot", "needs-leo", "code"))
+        self.assertIn("Phase 1 and Phase 2", r["reason"])
+        self.assertNotIn("phase", r)  # nothing to resume
+        self.assertEqual(r["next_turn"], 2)
+        ignored = {"parked": (issue(1, ["to-code", "needs-leo"]), "parked"),
+                   "done": (issue(1, ["to-code", "done"]), "parked"),
+                   "no label": (issue(1, []), "no to-code"),
+                   "claimed": (issue(1, ["to-code", "code-working"]), "claimed"),
+                   "stranger's issue": (issue(1, ["to-code"], author="mallory"), "not the repo owner")}
+        for name, (case, why) in ignored.items():
+            with self.subTest(name):
+                r = self.d(case)
+                self.assertEqual(r["action"], "ignore")
+                self.assertIn(why, r["reason"])
+        r = self.d(issue(1, ["to-code"]), labeled_by="mallory")
+        self.assertEqual((r["action"], r["reason"]), ("ignore", "label was not applied by the repo owner"))
 
     def test_approval_status(self):
         ok = lambda thread_: g.approval_status(ap_issue([], thread_), OWNER)["approved"]  # noqa: E731
@@ -280,27 +294,26 @@ class TriageTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         issues = [
-            issue(1, ["to-code"]),                                  # good: work
-            issue(2, ["to-code"]),                                  # labeled by a stranger
-            issue(3, ["to-code"]),                                  # at turn cap
-            issue(4, ["code-working"]),                             # stale claim
-            issue(5, ["code-working"]),                             # fresh claim
-            issue(6, ["to-code"], pull_request={"url": "x"}),       # a PR, must be skipped
-            issue(7, []),                                           # unlabeled, must be skipped
-            issue(8, ["to-code"], author="stranger"),               # stranger's issue
+            ap_item(1, ["to-code"]),                                # good: the Lead plans it
+            ap_item(2, ["to-code"]),                                # labeled by a stranger
+            issue(3, ["to-code"]),                                  # no Phase headings: parked once
+            ap_item(4, ["code-working"]),                           # stale claim
+            ap_item(5, ["code-working"]),                           # fresh claim
+            ap_item(6, ["to-code"], pull_request={"url": "x"}),     # a PR, must be skipped
+            ap_item(7, []),                                         # unlabeled, must be skipped
+            ap_item(8, ["to-code"], author="stranger"),             # stranger's issue
         ]
         cls.dir = write_fixtures({
             "issues.json": issues,
             "1.events.json": [event("to-code", OWNER, "2026-10-29T11:50:00Z")],
             "2.events.json": [event("to-code", "stranger", "2026-10-29T11:50:00Z")],
             "3.events.json": [event("to-code", OWNER, "2026-10-29T11:50:00Z")],
-            "3.comments.json": [comment(2), comment(3, "task", source="chat"), comment(4)],
             "4.events.json": [event("code-working", OWNER, "2026-10-29T08:00:00Z")],
             "5.events.json": [event("code-working", OWNER, "2026-10-29T11:50:00Z")],
             "8.events.json": [event("to-code", OWNER, "2026-10-29T11:50:00Z")],
         })
         cls.code, cls.out, _ = run(os.path.join(SCRIPTS, "triage.py"), "--repo", "o/r", "--owner", OWNER,
-                                   "--fixtures", cls.dir, "--now", NOW)
+                                   "--fixtures", cls.dir, "--now", NOW, "--role", "all")
 
     def test_exit_ok(self):
         self.assertEqual(self.code, 0)
@@ -316,9 +329,12 @@ class TriageTests(unittest.TestCase):
         self.assertIn("not applied by the repo owner", reasons[2])
         self.assertIn("not the repo owner", reasons[8])
 
-    def test_turn_cap_goes_to_needs_leo(self):
+    def test_a_to_code_issue_without_phase_headings_goes_to_needs_leo(self):
         self.assertEqual([n["number"] for n in self.out["needs_leo"]], [3])
-        self.assertIn("turn cap", self.out["needs_leo"][0]["reason"])
+        parked = self.out["needs_leo"][0]
+        self.assertIn("Phase 1 and Phase 2", parked["reason"])
+        self.assertEqual((parked["mode"], parked["next_turn"]), ("not-autopilot", 2))
+        self.assertNotIn("phase", parked)  # there is no phase to resume, so park gets no --phase
 
     def test_stale_vs_fresh_claim(self):
         self.assertEqual([s["number"] for s in self.out["stale"]], [4])
@@ -358,7 +374,7 @@ class TriageAutopilotTests(unittest.TestCase):
                 ap(21, ["awaiting-approval"]),            # approved: build (code)
                 ap(22, ["awaiting-approval"]),            # no reply yet: waiting
                 ap(23, ["needs-leo"]),                    # CONTINUE: resume phase 2 (code)
-                issue(24, ["needs-leo"]),                 # classic parked issue: not scanned
+                issue(24, ["needs-leo"]),                 # not an autopilot request, already parked: not scanned
                 ap(25, ["code-working"]),                 # approved build, 120 min: still running
                 ap(26, ["code-working"]),                 # approved build, 200 min: stale
                 ap(27, ["code-working"]),                 # plan run, 100 min: stale
@@ -407,7 +423,7 @@ class TriageAutopilotTests(unittest.TestCase):
     def test_waiting_plan_is_ignored_not_work(self):
         self.assertTrue(any(i["number"] == 22 and "waiting" in i["reason"] for i in self.triage("code")["ignored"]))
 
-    def test_classic_parked_and_done_are_not_scanned(self):
+    def test_a_parked_plain_issue_and_a_done_one_are_not_scanned(self):
         out = self.triage("all")
         seen = {x["number"] for k in ("work", "needs_leo", "stale", "ignored") for x in out[k]}
         self.assertNotIn(24, seen)
@@ -447,22 +463,23 @@ class LoopGhTests(unittest.TestCase):
         for label in ("to-code", "awaiting-approval", "needs-leo", "to-review", "reviewed"):
             self.assertIn(f"labels/{label}", calls)
 
-    def test_good_reply_plan_never_adds_to_code(self):
-        path = self.reply_file("<!-- loop:v1 from=code type=result turn=2 -->\nDone. PR https://x/y/pull/1\n")
-        code, out, _ = self.gh("reply", "--file", path, "--turn", "2", "--add", "to-chat")
-        self.assertEqual(code, 0)
-        calls = out["dry_run_calls"]
-        self.assertEqual(len(calls), 3)
-        self.assertFalse(any("to-code" in c_ for c_ in calls))
+    def test_the_classic_reply_command_is_gone(self):
+        import loop_gh
+        self.assertNotIn("reply", loop_gh.COMMANDS)
+        proc = subprocess.run([sys.executable, "-B", os.path.join(SCRIPTS, "loop_gh.py"), "reply", "--repo", "o/r",
+                               "--issue", "3"], capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 2)  # argparse: invalid choice
 
-    def test_reply_rejections_plan_nothing(self):
-        cases = {"wrong turn": ("<!-- loop:v1 from=code type=result turn=5 -->\nok\n", "to-chat"),
-                 "too long": ("<!-- loop:v1 from=code type=result turn=2 -->\n" + "word " * 200, "to-chat"),
-                 "to-code": ("<!-- loop:v1 from=code type=result turn=2 -->\nok\n", "to-code"),
-                 "header not first": ("APPROVED\n<!-- loop:v1 from=code type=result turn=2 -->\nok\n", "to-chat")}
-        for name, (text, add) in cases.items():
+    def test_a_rejected_reply_plans_no_write(self):
+        good = f"<!-- loop:v1 from=code type=result phase=2 pr=6 head={SHA1} turn=3 -->\nReady.\nModel: sonnet\n"
+        cases = {"wrong turn": good.replace("turn=3", "turn=5"),
+                 "too long": good + "word " * 200,
+                 "header not first": "APPROVED\n" + good,
+                 "no Model line": good.replace("Model: sonnet\n", "")}
+        for name, text in cases.items():
             with self.subTest(name):
-                code, out, _ = self.gh("reply", "--file", self.reply_file(text), "--turn", "2", "--add", add)
+                code, out, _ = self.gh("ready-for-review", "--pr", "6", "--file", self.reply_file(text), "--turn", "3",
+                                       "--fixtures", self.pr_fixture())
                 self.assertEqual(code, 1)
                 self.assertEqual(out["dry_run_calls"], [])
 
@@ -981,9 +998,7 @@ class ModelLineTests(unittest.TestCase):
         self.assertEqual(self.problems(summary + "Model: haiku\n", "done", "code", 6), [])
 
     def test_other_replies_need_none(self):
-        classic = "<!-- loop:v1 from=code type=result turn=2 -->\nDone.\n"
-        self.assertEqual(self.problems(classic, "to-chat", "code"), [])
-        question = "<!-- loop:v1 from=code type=question phase=2 turn=2 -->\nPaused: why.\n"
+        question ="<!-- loop:v1 from=code type=question phase=2 turn=2 -->\nPaused: why.\n"
         self.assertEqual(self.problems(question, "needs-leo", "code"), [])
 
     def test_the_line_must_be_exact_and_single(self):
@@ -1033,7 +1048,7 @@ class ReopenTests(unittest.TestCase):
                 closed(42, ["awaiting-approval", "done"], None),                           # finished
                 closed(43, ["awaiting-approval"], None),                                   # no keyword yet
                 closed(44, ["awaiting-approval"], None, updated="2026-10-26T11:30:00Z"),   # too old
-                dict(issue(45, ["needs-leo"]), state="closed"),                            # classic issue
+                dict(issue(45, ["needs-leo"]), state="closed"),                            # not an autopilot request
                 closed(46, ["needs-leo"], None),                                           # CONTINUE
                 closed(47, ["to-review"], None),                                           # not an owner-wait state
                 closed(48, ["awaiting-approval"], None, pull_request={"url": "x"}),        # a PR
@@ -1161,9 +1176,11 @@ class TriageTierTests(unittest.TestCase):
         w = self.work(triage_run(self.files(comments=second, labels=("awaiting-approval",)), "--role", "lead"))[50]
         self.assertEqual((w["round"], w["tier"]), (2, "opus"))
 
-    def test_classic_issues_have_no_tier(self):
+    def test_a_plain_issue_is_never_work_so_it_has_no_tier(self):
         out = triage_run({"issues.json": [issue(1, ["to-code"])], "1.events.json": [event("to-code", OWNER, NOW)]})
-        self.assertNotIn("tier", out["work"][0])
+        self.assertEqual(out["work"], [])
+        self.assertEqual([n["number"] for n in out["needs_leo"]], [1])
+        self.assertNotIn("tier", out["needs_leo"][0])
 
 
 class TriageStalledTests(unittest.TestCase):
@@ -1196,7 +1213,7 @@ class TriageStalledTests(unittest.TestCase):
         self.assertEqual(out["stalled"], [])
         self.assertEqual([w["number"] for w in out["work"]], [60, 61, 62])
 
-    def test_a_classic_issue_is_never_reported_as_stalled(self):
+    def test_a_plain_issue_is_never_reported_as_stalled(self):
         old = dict(issue(70, ["to-code"]), updated_at="2026-10-29T08:00:00Z")
         out = triage_run({"issues.json": [old], "70.events.json": [event("to-code", OWNER, "2026-10-29T08:00:00Z")]},
                          "--role", "lead")
@@ -1402,10 +1419,20 @@ class ApprovalRuleTests(unittest.TestCase):
 
 class CheckReplyRuleTests(unittest.TestCase):
     def test_links_count_as_words(self):
-        text = "<!-- loop:v1 from=code type=result turn=2 -->\n" + " ".join(["https://example.com/x"] * 200)
-        report = cr.check(text, 2, ["to-chat"], ["code-working"])
+        text = "<!-- loop:v1 from=code type=question phase=2 turn=2 -->\n" + " ".join(["https://example.com/x"] * 200)
+        report = cr.check(text, 2, ["needs-leo"], ["code-working"])
         self.assertFalse(report["ok"])
         self.assertEqual(report["words"], 200)
+
+    def test_a_reply_adds_exactly_one_allowed_hand_off_label_and_never_to_code(self):
+        text = "<!-- loop:v1 from=code type=question phase=2 turn=2 -->\nPaused: why.\n"
+        ok = lambda add, remove=("code-working",): cr.check(text, 2, add, list(remove))["ok"]  # noqa: E731
+        self.assertTrue(ok(["needs-leo"]))
+        self.assertFalse(ok(["to-code"]))
+        self.assertFalse(ok(["to-chat"]))  # the classic hand-off label no longer exists
+        self.assertFalse(ok(["needs-leo", "done"]))
+        self.assertFalse(ok(["needs-leo"], remove=()))  # code-working must come off
+        self.assertNotIn("to-chat", cr.ALLOWED_ADD)
 
     def test_plan_reply_needs_risk_and_ci_lines(self):
         base = "<!-- loop:v1 from=lead type=plan phase=1 turn=2 -->\nPlan ready.\nModel: sonnet\n"
