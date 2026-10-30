@@ -2,6 +2,7 @@
 // Serves odometer-trips/ on localhost, then at 1280, 768 and 375 px (mock transport):
 // adds a vehicle, triggers both odometer rejections, saves a trip, reloads, voids it.
 // Then checks that the local transport keeps a trip across a reload.
+// Also downloads the trips CSV and checks the header and the quoting at each width.
 // Fails on any console error, page error, failed request or horizontal scroll.
 
 const http = require('node:http');
@@ -89,6 +90,24 @@ async function mockFlow(browser, base, [width, height]) {
   await trip.getByText('42 km', { exact: true }).waitFor();
   assert.equal(await page.locator('#trip-error').isHidden(), true, `${label}: error cleared`);
   assert.equal(await page.getByLabel('Start km').inputValue(), '5042', `${label}: start moves to new last end`);
+  await noHorizontalScroll(page, label);
+
+  // CSV export: a destination with a comma and quotes comes back quoted in the trips file.
+  await saveTrip(page, { start: 5042, end: 5050, destination: 'Shop, "North"' });
+  await page.locator('#trip-list li', { hasText: 'Shop' }).getByText('8 km', { exact: true }).waitFor();
+  const exportRow = page.locator('#export-list li[data-table="trips"]');
+  await exportRow.getByText('3 rows', { exact: true }).waitFor();
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    exportRow.getByRole('button', { name: 'Export trips' }).click(),
+  ]);
+  assert.match(download.suggestedFilename(), /^odometer-trips-\d{4}-\d{2}-\d{2}\.csv$/, `${label}: file name`);
+  const csv = fs.readFileSync(await download.path(), 'utf8');
+  assert.ok(csv.startsWith('﻿'), `${label}: byte order mark`);
+  const lines = csv.slice(1).split('\r\n');
+  assert.equal(lines[0], 'id,vehicle_id,trip_date,start_km,end_km,purpose_id,destination,status,created_at,created_by,updated_at,updated_by,is_active,row_version', `${label}: header`);
+  assert.equal(lines.filter((l) => l.includes('Shop')).length, 1, `${label}: one Shop row`);
+  assert.ok(lines.some((l) => l.includes('"Shop, ""North"""')), `${label}: quoting`);
   await noHorizontalScroll(page, label);
 
   // Survives a reload.
