@@ -76,4 +76,4 @@ Files in scope: trip-monitoring/, CLAUDE.md
 - [ ] Confirm the folder name `trip-monitoring/` (or reply `REVISE:` with another).
 - [ ] Later, for M2: create the real Sheet and Apps Script project; nothing is needed for M1.
 
-AWAITING APPROVAL
+APPROVED by lheiiyy on 2026-10-30
