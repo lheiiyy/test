@@ -27,8 +27,12 @@ test('legal transitions pass through the whole flow', () => {
   svc.addTraveller(REQ, t.id, 'USR-0002');
   assert.strictEqual(svc.submit(REQ, t.id).status, 'Submitted');
   assert.strictEqual(svc.validate(SUP, t.id).status, 'Trip validated');
+  assert.throws(() => svc.complete(ACC, t.id), /start and end/);
+  svc.returnToDraft(SUP, t.id, 'Add readings');
   svc.recordReading(REQ, t.id, 'start', 1000);
   svc.recordReading(REQ, t.id, 'end', 1050);
+  svc.submit(REQ, t.id);
+  svc.validate(SUP, t.id);
   assert.strictEqual(svc.complete(ACC, t.id).status, 'Completed');
 });
 
@@ -68,10 +72,13 @@ test('validation rules: required fields, vehicle, travellers, readings', () => {
   svc.submit(REQ, t.id);
   svc.validate(SUP, t.id);
   assert.throws(() => svc.complete(ACC, t.id), /start and end/);
+  svc.returnToDraft(SUP, t.id, 'Add readings');
   svc.recordReading(REQ, t.id, 'start', 500);
   svc.recordReading(REQ, t.id, 'end', 400);
-  assert.throws(() => svc.complete(ACC, t.id), /end reading/);
   assert.throws(() => svc.recordReading(REQ, t.id, 'middle', 1), /kind/);
+  svc.submit(REQ, t.id);
+  svc.validate(SUP, t.id);
+  assert.throws(() => svc.complete(ACC, t.id), /end reading/);
 });
 
 test('wrong role is refused, and nothing is written', () => {
@@ -117,4 +124,29 @@ test('delete is soft, audited and role checked', () => {
   assert.strictEqual(repos.trips.get(t.id), null);
   assert.ok(repos.trips.get(t.id, true).deleted_at);
   assert.strictEqual(repos.audit_log.list().pop().action, 'delete');
+});
+
+test('readings only while Draft, and only one start and one end', () => {
+  const { svc } = setup();
+  const t = draft(svc);
+  svc.recordReading(REQ, t.id, 'start', 1000);
+  assert.throws(() => svc.recordReading(REQ, t.id, 'start', 1001), /already exists/);
+  svc.addTraveller(REQ, t.id, 'USR-0002');
+  svc.submit(REQ, t.id);
+  assert.throws(() => svc.recordReading(REQ, t.id, 'end', 1050), /only change while the trip is Draft/);
+});
+
+test('only a Draft trip can be deleted', () => {
+  const { svc, repos } = setup();
+  const t = draft(svc);
+  svc.addTraveller(REQ, t.id, 'USR-0002');
+  svc.submit(REQ, t.id);
+  assert.throws(() => svc.deleteTrip(REQ, t.id), /only a Draft/);
+  assert.ok(repos.trips.get(t.id));
+});
+
+test('audit rows use the injected clock', () => {
+  const { svc, repos } = setup();
+  draft(svc);
+  assert.strictEqual(repos.audit_log.list()[0].at, '2026-01-01T00:00:00.000Z');
 });

@@ -72,10 +72,12 @@ function createTripService(repos) {
     },
     recordReading(actorId, tripId, kind, reading) {
       const user = requireRole(repos, actorId, WHO.create, 'record a reading');
-      ownTrip(user, load(tripId), 'record readings for');
+      const trip = load(tripId);
+      ownTrip(user, trip, 'record readings for');
+      if (trip.status !== 'Draft') throw new Error('readings can only change while the trip is Draft');
       if (!['start', 'end'].includes(kind)) throw new Error('kind must be start or end');
       if (typeof reading !== 'number' || !(reading >= 0)) throw new Error('reading must be a number, 0 or more');
-      const trip = load(tripId);
+      if (readings(tripId).some((r) => r.kind === kind)) throw new Error(`a ${kind} reading already exists for this trip`);
       const row = repos.vehicle_readings.insert(actorId, { trip_id: tripId, vehicle_id: trip.vehicle_id, kind, reading });
       audit(repos, actorId, 'record_reading', 'vehicle_readings', row.id, kind);
       return row;
@@ -110,7 +112,9 @@ function createTripService(repos) {
     },
     deleteTrip(actorId, id) {
       const user = requireRole(repos, actorId, WHO.create, 'delete a trip');
-      ownTrip(user, load(id), 'delete');
+      const trip = load(id);
+      ownTrip(user, trip, 'delete');
+      if (trip.status !== 'Draft') throw new Error('only a Draft trip can be deleted');
       const row = repos.trips.softDelete(actorId, id);
       audit(repos, actorId, 'delete', 'trips', id, null);
       return row;
