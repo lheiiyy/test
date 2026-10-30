@@ -74,6 +74,7 @@ import datetime
 import json
 import os
 import re
+import subprocess
 import sys
 import tempfile
 import time
@@ -233,8 +234,11 @@ def plan_file_problems(a):
             return ['pass --plan-file <docs/plan-x.md> (or --no-plan-file "<where the plan is>" for a plan kept '
                     "outside the repo)"]
         return []
-    with open(a.plan_file, encoding="utf-8") as f:
-        text = f.read()
+    try:
+        with open(a.plan_file, encoding="utf-8") as f:
+            text = f.read()
+    except OSError:
+        return [f"plan file not found: {a.plan_file} (give a path from the repository root, or an absolute path)"]
     plan_rel, changed = os.path.normpath(a.plan_file), None
     if a.git_base and a.git_base != "none":
         try:
@@ -523,9 +527,25 @@ def parser():
     return ap
 
 
+def from_repo_root(path):
+    """A relative path that is missing here is tried from the top of the git checkout, so --file and
+    --plan-file also work when the command runs from the skill folder. Anything else is returned as given."""
+    if not path or os.path.isabs(path) or os.path.exists(path):
+        return path
+    try:
+        proc = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True)
+    except FileNotFoundError:
+        return path
+    candidate = os.path.join(proc.stdout.strip(), path) if proc.returncode == 0 else ""
+    return candidate if candidate and os.path.exists(candidate) else path
+
+
 def main():
     a = parser().parse_args()
     plan = []
+    for name in ("file", "plan_file"):
+        if getattr(a, name, None):
+            setattr(a, name, from_repo_root(getattr(a, name)))
     try:
         cfg = loop_config.load(a.config)
         set_owner_associations(cfg["owner_associations"])

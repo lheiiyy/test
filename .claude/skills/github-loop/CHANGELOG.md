@@ -2,6 +2,14 @@
 
 Each adopted change is its own PR with one line here. After its PR is merged, tag the merge commit `github-loop-<date>` (for example `github-loop-2026-10-29`), so the runbook can roll back to it.
 
+## 2026-10-30: portable setup for other projects
+
+- `scripts/init_repo.py`: one command sets up a new repository. It writes `.github/github-loop.json`, the Autopilot issue form and a starter `CLAUDE.md` (never over an existing file without `--force`), installs the skill with `--install-skill`, creates the labels with `--create-labels`, and prints the Code, Lead and Lead Deep task prompts with `--prompts`. `--dry-run` writes nothing.
+- `references/templates/`: the issue form, the Code and Lead task prompts and the starter `CLAUDE.md`, with `{{placeholders}}`. They are the one source for the scheduled-task prompts (taken from the prompts that ran live in `lheiiyy/test`, with the owner, repo, language and model filled in). The setup guide points to them instead of keeping a second copy.
+- `loop_gh.py`: `--file` and `--plan-file` also work when the command runs from the skill folder (a relative path that is missing is tried from the repo root), and a missing plan file is a clear problem, not a traceback.
+- `lead.md`: in a chat, look for existing material (folders, docs, PRs, issues) before planning anything new, and plan the next slice on a project that already exists.
+- Docs: no owner, repo or project names left in SKILL.md, setup.md or the script docstrings; setup.md starts with a one-command quick start.
+
 ## 2026-10-29 (later): D4 changed to a
 
 - Plans and plan replies carry `Files in scope: <folders/ and files>`; `*` and similar are refused, and the scope must cover the plan file. A `CONTINUE:` still keeps the approval, but `merge` exits 9 when a changed file is outside the scope (or the plan declares none), so the owner decides: `REVISE:`, a Merge tap, or `MERGE ...` in a chat session (which covers exit 8 and 9 together).

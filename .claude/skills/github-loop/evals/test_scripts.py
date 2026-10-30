@@ -1696,6 +1696,30 @@ class PostPlanRuleTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertTrue(any("app.js" in p for p in out["problems"]))
 
+    def test_a_plan_file_is_found_from_the_repo_root_when_run_from_a_subfolder(self):
+        d = tempfile.mkdtemp()
+        git = ["git", "-C", d, "-c", "user.name=t", "-c", "user.email=t@t"]
+        subprocess.run(git + ["init", "-q"], check=True)
+        with open(os.path.join(d, "README.txt"), "w") as f:
+            f.write("base\n")
+        subprocess.run(git + ["add", "."], check=True)
+        subprocess.run(git + ["commit", "-qm", "base"], check=True)
+        os.makedirs(os.path.join(d, "docs"))
+        os.makedirs(os.path.join(d, "tools", "skill"))
+        with open(os.path.join(d, "docs", "plan-readme.md"), "w") as f:
+            f.write(GOOD_PLAN)
+        code, out, _ = run(os.path.join(SCRIPTS, "loop_gh.py"), "post-plan", "--repo", "o/r", "--issue", "3",
+                           "--turn", "2", "--file", reply_path(self, self.REPLY), "--plan-file",
+                           "docs/plan-readme.md", "--git-base", "HEAD", "--dry-run",
+                           cwd=os.path.join(d, "tools", "skill"))
+        self.assertEqual(code, 0, out)
+
+    def test_a_missing_plan_file_is_a_clear_problem_not_a_traceback(self):
+        code, out, err = self.post("--plan-file", "docs/no-such-plan.md")
+        self.assertEqual(code, 1, err)
+        self.assertIn("plan file not found", out["problems"][0])
+        self.assertNotIn("Traceback", err)
+
     def test_new_commits_on_the_base_do_not_count_as_plan_changes(self):
         d = tempfile.mkdtemp()
         git = ["git", "-C", d, "-c", "user.name=t", "-c", "user.email=t@t"]
@@ -2052,6 +2076,9 @@ class PackageTests(unittest.TestCase):
         self.assertEqual(code, 0)
         names = zipfile.ZipFile(out).namelist()
         for must in ("github-loop/SKILL.md", "github-loop/scripts/loop_gh.py", "github-loop/scripts/route.py",
+                     "github-loop/scripts/init_repo.py", "github-loop/references/templates/code-task.md",
+                     "github-loop/references/templates/lead-task.md",
+                     "github-loop/references/templates/autopilot-issue-form.yml",
                      "github-loop/references/experts/registry.json", "github-loop/references/lead.md"):
             self.assertIn(must, names)
         self.assertFalse(any("/evals/" in n or n.endswith(".pyc") or "__pycache__" in n for n in names))
@@ -2083,6 +2110,151 @@ class ModelSelectionTests(unittest.TestCase):
         r = rt.route("review", ["src/auth.js"], session="sonnet")
         reply = verdict_text(5).replace("Model: sonnet", r["model"]["model_line"]["inline"])
         self.assertTrue(cr.check(reply, 5, ["reviewed"], ["code-working"], expect_from="lead", session="sonnet")["ok"])
+
+
+class InitRepoTests(unittest.TestCase):
+    """scripts/init_repo.py: one command sets up a new repository, and never overwrites silently."""
+    SCRIPT = os.path.join(SCRIPTS, "init_repo.py")
+    ARGS = ("--repo", "acme/shop", "--owner", "acme-owner", "--owner-name", "Ana", "--language", "English",
+            "--stack", "Node + Postgres: a REST API")
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.d, True)
+
+    def init(self, *extra):
+        return run(self.SCRIPT, *self.ARGS, "--dir", self.d, *extra)
+
+    def read(self, rel):
+        with open(os.path.join(self.d, rel), encoding="utf-8") as f:
+            return f.read()
+
+    def statuses(self, out):
+        return {f["path"]: f["status"] for f in out["files"]}
+
+    def test_it_writes_the_settings_the_form_and_a_starter_claude_md(self):
+        code, out, err = self.init()
+        self.assertEqual(code, 0, err)
+        self.assertEqual(set(self.statuses(out).values()), {"created"})
+        cfg = json.loads(self.read(".github/github-loop.json"))
+        self.assertEqual((cfg["owner"], cfg["owner_name"], cfg["language"]), ("acme-owner", "Ana", "English"))
+        self.assertEqual(cfg["branch_prefix"], "claude/")
+        form = self.read(".github/ISSUE_TEMPLATE/autopilot.yml")
+        self.assertIn('value: "acme/shop"', form)
+        self.assertIn('value: "Node + Postgres: a REST API"', form)
+        self.assertIn("acme-owner", self.read("CLAUDE.md"))
+        for rel in (".github/github-loop.json", ".github/ISSUE_TEMPLATE/autopilot.yml", "CLAUDE.md"):
+            self.assertNotIn("{{", self.read(rel), rel)
+
+    def test_the_form_keeps_every_field_the_loop_reads(self):
+        self.init()
+        import re
+        ids = set(re.findall(r"^\s+id: ([\w-]+)$", self.read(".github/ISSUE_TEMPLATE/autopilot.yml"), re.M))
+        for field in ("objective", "project", "repo", "feature", "project-folder", "stack", "users",
+                      "release-policy", "model", "context", "phase-1", "phase-2"):
+            self.assertIn(field, ids)
+        self.assertIn('labels: ["to-code"]', self.read(".github/ISSUE_TEMPLATE/autopilot.yml"))
+
+    def test_a_second_run_changes_nothing_and_a_different_one_is_kept_until_force(self):
+        self.init()
+        code, out, _ = self.init()
+        self.assertEqual(set(self.statuses(out).values()), {"unchanged"})
+        with open(os.path.join(self.d, "CLAUDE.md"), "w") as f:
+            f.write("my own rules\n")
+        code, out, _ = self.init()
+        self.assertIn("kept", self.statuses(out)["CLAUDE.md"])
+        self.assertEqual(self.read("CLAUDE.md"), "my own rules\n")
+        code, out, _ = self.init("--force")
+        self.assertEqual(self.statuses(out)["CLAUDE.md"], "replaced")
+        self.assertIn("acme-owner", self.read("CLAUDE.md"))
+
+    def test_a_dry_run_writes_nothing(self):
+        code, out, _ = self.init("--dry-run", "--install-skill", "--create-labels")
+        self.assertEqual(code, 0)
+        self.assertEqual(os.listdir(self.d), [])
+        self.assertTrue(all(s.startswith("would be") for s in self.statuses(out).values()))
+        self.assertIn("dry run", out["labels"])
+
+    def test_install_skill_copies_the_skill_without_the_tests(self):
+        code, out, _ = self.init("--install-skill")
+        self.assertEqual(code, 0)
+        base = os.path.join(self.d, ".claude", "skills", "github-loop")
+        for rel in ("SKILL.md", "scripts/loop_gh.py", "scripts/init_repo.py", "references/lead.md",
+                    "references/templates/code-task.md"):
+            self.assertTrue(os.path.exists(os.path.join(base, rel)), rel)
+        self.assertFalse(os.path.exists(os.path.join(base, "evals")))
+        proc = subprocess.run([sys.executable, "-B", os.path.join(base, "scripts", "route.py"), "--step", "build",
+                               "--paths", "README.md"], capture_output=True, text=True, cwd=self.d)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+
+    def test_the_task_prompts_name_the_repo_owner_model_and_the_session(self):
+        code, out, _ = self.init("--prompts", "--model", "opus")
+        prompts = out["prompts"]
+        self.assertEqual(sorted(prompts), ["code", "lead", "lead_deep"])
+        for name, text in prompts.items():
+            with self.subTest(name):
+                self.assertNotIn("{{", text)
+                self.assertIn("acme/shop", text)
+                self.assertIn("--owner acme-owner", text)
+                self.assertIn("--session ", text)
+                self.assertIn("exactly \"No new work.\"", text)
+        self.assertIn("--role code", prompts["code"])
+        self.assertIn("--role lead`", prompts["lead"])
+        self.assertIn("--role lead --min-tier opus", prompts["lead_deep"])
+        self.assertIn("--session opus", prompts["lead_deep"])
+        self.assertIn("--session opus", prompts["code"])
+
+    def test_the_prompts_only_use_scripts_and_options_that_exist(self):
+        import re
+        code, out, _ = self.init("--prompts")
+        triage_help = subprocess.run([sys.executable, "-B", os.path.join(SCRIPTS, "triage.py"), "--help"],
+                                     capture_output=True, text=True).stdout
+        for name, text in out["prompts"].items():
+            for script in re.findall(r"scripts/([a-z_]+\.py)", text):
+                self.assertTrue(os.path.exists(os.path.join(SCRIPTS, script)), (name, script))
+            for ref in re.findall(r"references/([a-z_/-]+\.md)", text):
+                self.assertTrue(os.path.exists(os.path.join(SCRIPTS, "..", "references", ref)), (name, ref))
+            for flag in re.findall(r"triage\.py [^`]*", text)[0].split():
+                if flag.startswith("--"):
+                    self.assertIn(flag, triage_help, (name, flag))
+
+    def test_bad_input_is_exit_2(self):
+        code, out, _ = run(self.SCRIPT, "--repo", "not-a-repo", "--owner", "x", "--dir", self.d)
+        self.assertEqual((code, out["ok"]), (2, False))
+        code, out, _ = run(self.SCRIPT, "--repo", "a/b", "--owner", "bad owner", "--dir", self.d)
+        self.assertEqual(code, 2)
+        code, out, _ = run(self.SCRIPT, "--repo", "a/b", "--owner", "x", "--dir", os.path.join(self.d, "missing"))
+        self.assertEqual(code, 2)
+        self.assertIn("not a folder", out["problem"])
+
+    def test_lead_deep_always_runs_on_opus_whatever_the_other_tasks_use(self):
+        code, out, _ = self.init("--prompts")
+        self.assertIn("--session sonnet", out["prompts"]["code"])
+        self.assertIn("--session sonnet", out["prompts"]["lead"])
+        self.assertIn("--session opus", out["prompts"]["lead_deep"])
+        self.assertNotIn("--session sonnet", out["prompts"]["lead_deep"])
+        self.assertNotIn("--min-tier", out["prompts"]["lead"])
+
+    def test_a_placeholder_without_a_value_is_an_error(self):
+        import init_repo as ir
+        self.assertEqual(ir.render("a {{x}} b", {"x": 1}), "a 1 b")
+        with self.assertRaises(ValueError):
+            ir.render("a {{x}} {{y}}", {"x": 1})
+
+    def test_installing_into_the_skill_s_own_folder_is_a_no_op(self):
+        import init_repo as ir
+        link_dir = os.path.join(self.d, ".claude", "skills")
+        os.makedirs(link_dir)
+        os.symlink(ir.SKILL, os.path.join(link_dir, "github-loop"))
+        result = ir.install_skill(self.d, force=True, dry_run=False)
+        self.assertEqual(len(result), 1)
+        self.assertTrue(result[0]["status"].startswith("unchanged (this is the installed copy"))
+
+    def test_a_value_with_a_quote_cannot_break_the_form(self):
+        code, out, _ = run(self.SCRIPT, "--repo", "acme/shop", "--owner", "acme-owner", "--dir", self.d,
+                           "--stack", 'He said "go": yes')
+        self.assertEqual(code, 0)
+        self.assertIn('value: "He said \\"go\\": yes"', self.read(".github/ISSUE_TEMPLATE/autopilot.yml"))
 
 
 if __name__ == "__main__":
