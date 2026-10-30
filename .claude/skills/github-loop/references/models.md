@@ -54,8 +54,8 @@ A scheduled run showed no subagent use, so a Sonnet Lead cannot reliably hand a 
 
 | Task | Triage flags | Takes |
 |---|---|---|
-| Lead (Sonnet, hourly) | `--role lead --max-tier sonnet` | Work whose tier is sonnet or lower. Opus-tier work waits in `deferred`. |
-| Lead Deep (Opus, every 2 hours) | `--role lead --min-tier opus` | Only opus-tier work: sensitive files or goal words, 8 or more files, an architecture-heavy goal, the third round, the second revision, or Leo's `Model: opus`. |
+| Lead (Sonnet, started by events) | `--role lead --max-tier sonnet` | Work whose tier is sonnet or lower. Opus-tier work waits in `deferred`. |
+| Lead Deep (Opus, scheduled every 2 hours; events do not start it) | `--role lead --min-tier opus` | Only opus-tier work: sensitive files or goal words, 8 or more files, an architecture-heavy goal, the third round, the second revision, or Leo's `Model: opus`. |
 
 - Each work entry carries `tier` and `tier_reason`, an estimate from the request and the PR's file list (one extra call, review and fix only). The step still runs `pick_model.py` with the real diff, and that answer wins.
 - **No deadlock:** after `--defer-minutes` (default 120) the normal Lead takes deferred work anyway. The entry then has a `tier_note`, and the Model line must say `wanted opus; ran inline`. If Lead Deep does not exist, leave `--max-tier` off.

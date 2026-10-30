@@ -2,6 +2,16 @@
 
 Each adopted change is its own PR with one line here. After its PR is merged, tag the merge commit `github-loop-<date>` (for example `github-loop-2026-10-29`), so the runbook can roll back to it.
 
+## 2026-10-30 (newest): event-first rebuild
+
+- A GitHub event now starts the role that has work, in seconds, instead of an hourly poll. The `Loop fire` workflow (`references/templates/loop-fire.yml`, installed as `.github/workflows/loop-fire.yml`) runs only for the owner's own activity; `scripts/route_event.py` decides lead, code, both or nobody (no secret, no comment text printed); `scripts/fire.py` is the only code that reads the four fire secrets and posts one fixed line to the task's API trigger. The routing table, setup, smoke test, failure fixes and limits are in `references/events.md`.
+- Moved from `.github/loop-fire/` (plan #16, PR #17) into the skill, so the router, the fire script, their tests and the workflow template travel with the zip and `init_repo.py --install-events` installs the workflow. `.github/loop-fire/` is gone.
+- Each scheduled task is now a slow backup that runs every 6 hours and catches a missed event. The task prompts say a run starts from a GitHub event or the backup, and that any text sent with the start is only a hint: triage decides.
+- `references/setup.md` is reordered around the event path (new step 5: API triggers, four secrets, dry run, one real fire). The hourly wording is gone from SKILL.md, setup, models, the issue form, the task template and the prompts.
+- CI runs every `test_*.py` in `evals/` (the rules, the router, the fire script and the workflow checks), not only `test_scripts.py`. A test fails if `.github/workflows/loop-fire.yml` differs from the template.
+- Unchanged: the approval, merge and risk gates, the labels, the headers, the caps. Lead Deep stays a scheduled task (events do not start it).
+- Known limits: a personal repository is assumed (an organization repository edits the workflow's `if:` line); a finished check is not an event; the API trigger is a research preview.
+
 ## 2026-10-30 (last): classic mode removed
 
 - Removed: the classic chat-to-Code flow (an issue without Phase 1 and Phase 2 headings, one build, no plan approval, no scripted merge, a turn cap of 4). It sat outside the plan-approval and merge-gate rules and no live task used it. Gone with it: its reference file, the `reply` command of `loop_gh.py`, the `to-chat` label, the `--max-turn` option of `triage.py` and `loop_guard.py`, and the `status` reply type and `from=chat` header.

@@ -2108,7 +2108,9 @@ class PackageTests(unittest.TestCase):
                      "github-loop/references/templates/autopilot-issue-form.yml",
                      "github-loop/references/experts/registry.json", "github-loop/references/lead.md",
                      "github-loop/scripts/selfcheck.py", "github-loop/references/web-apps.md",
-                     "github-loop/references/experts/appsscript.md", "github-loop/references/templates/tests.yml"):
+                     "github-loop/references/experts/appsscript.md", "github-loop/references/templates/tests.yml",
+                     "github-loop/scripts/route_event.py", "github-loop/scripts/fire.py",
+                     "github-loop/references/events.md", "github-loop/references/templates/loop-fire.yml"):
             self.assertIn(must, names)
         self.assertFalse(any("/evals/" in n or n.endswith(".pyc") or "__pycache__" in n for n in names))
 
@@ -2232,6 +2234,35 @@ class InitRepoTests(unittest.TestCase):
         self.assertIn("--role lead --min-tier opus", prompts["lead_deep"])
         self.assertIn("--session opus", prompts["lead_deep"])
         self.assertIn("--session opus", prompts["code"])
+
+    def test_the_prompts_treat_the_start_text_as_a_hint_and_let_triage_decide(self):
+        code, out, _ = self.init("--prompts")
+        for name, text in out["prompts"].items():
+            with self.subTest(name):
+                self.assertIn("GitHub event", text)
+                self.assertIn("only a hint", text)
+                self.assertNotIn("hourly", text)
+
+    def test_install_events_writes_the_workflow_exactly_as_the_template_has_it(self):
+        code, out, _ = self.init("--install-events")
+        self.assertEqual(code, 0)
+        rel = ".github/workflows/loop-fire.yml"
+        self.assertEqual(self.statuses(out)[rel], "created")
+        with open(os.path.join(SKILL_DIR, "references", "templates", "loop-fire.yml"), encoding="utf-8") as f:
+            self.assertEqual(self.read(rel), f.read())
+        self.assertEqual(self.statuses(self.init("--install-events")[1])[rel], "unchanged")
+
+    def test_the_workflow_is_not_written_unless_asked_for(self):
+        code, out, _ = self.init()
+        self.assertNotIn(".github/workflows/loop-fire.yml", self.statuses(out))
+        self.assertFalse(os.path.exists(os.path.join(self.d, ".github", "workflows")))
+
+    def test_the_next_steps_send_the_owner_to_the_event_setup_and_a_slow_backup(self):
+        code, out, _ = self.init()
+        steps = " ".join(out["next"])
+        self.assertIn("references/events.md", steps)
+        self.assertIn("every 6 hours", steps)
+        self.assertNotIn("hourly", steps)
 
     def test_the_prompts_only_use_scripts_and_options_that_exist(self):
         import re

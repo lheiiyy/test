@@ -7,7 +7,7 @@ body:
     attributes:
       value: |
         Fill the first eight fields; the rest are the owner's standard rules and can stay as they are.
-        The Lead posts a plan and readiness matrix within about an hour. Then comment `APPROVED` (capitals) to build and merge,
+        The Lead posts a plan and readiness matrix within minutes of your request (up to 6 hours if the event trigger is not set up). Then comment `APPROVED` (capitals) to build and merge,
         `REVISE: <notes>` to change the plan, or `CONTINUE: <answer>` to answer a question.
         Tap **Comment**, not "Close with comment": closing hides the issue from the loop.
         High-risk work (login, permissions, schema, deploys, workflows, the loop's own skill) waits for your Merge tap at the end.

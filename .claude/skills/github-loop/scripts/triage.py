@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only hourly check for the github-loop agents.
+"""Read-only check at the start of every github-loop run (event-started or backup).
 
 One command replaces the "list issues, fetch comments, run the guard" steps, so an
 idle scheduled run costs almost no tokens: if `work` is empty, the run just says

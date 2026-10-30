@@ -3,13 +3,14 @@
 
     python3 scripts/init_repo.py --repo <owner>/<repo> --owner <login> [--owner-name NAME]
         [--language Taglish] [--model sonnet] [--stack "..."] [--project NAME] [--dir CHECKOUT]
-        [--install-skill] [--create-labels] [--prompts] [--force] [--dry-run]
+        [--install-skill] [--install-events] [--create-labels] [--prompts] [--force] [--dry-run]
 
 Writes, inside the checkout (--dir, default: the git checkout the command runs in):
   .github/github-loop.json                 the repository's settings (scripts/config.py)
   .github/ISSUE_TEMPLATE/autopilot.yml     the request form, from references/templates/
   CLAUDE.md                                a short starter for the project rules, only if none exists
   .claude/skills/github-loop/              this skill, with --install-skill (never the tests)
+  .github/workflows/loop-fire.yml          the event trigger that starts Lead and Code, with --install-events
 A file that already exists is kept, unless it is identical (then it is unchanged) or --force replaces it.
 --create-labels creates the loop labels on GitHub (readiness.py). --prompts adds the ready-to-paste Code,
 Lead and Lead Deep scheduled-task prompts (references/templates/) to the report.
@@ -38,8 +39,12 @@ DEFAULT_STACK = "Describe the stack and the folders the loop may touch."
 PLACEHOLDER = re.compile(r"\{\{(\w+)\}\}")
 NEXT_STEPS = [
     "Put the files in a pull request. The skill folder and .github/ are high risk, so you merge it.",
-    "Create two hourly scheduled tasks (Code at minute 3, Lead at minute 33) from the printed prompts "
-    "(references/setup.md, step 2). Use Sonnet, and turn on push notifications.",
+    "Create the Code and Lead scheduled tasks from the printed prompts (references/setup.md, step 4). "
+    "Use Sonnet, turn on push notifications, and run each every 6 hours (Code `3 */6 * * *`, "
+    "Lead `33 */6 * * *`) as the slow backup.",
+    "Give each task an API trigger, save the four fire values as GitHub repository secrets, and run the "
+    "Loop fire workflow once as a dry run (references/events.md). Events start the tasks; the 6-hour "
+    "run only catches a missed event.",
     "Do not require approvals on the main branch; every agent posts as you. Status checks are fine.",
     "File one small request with the Autopilot issue form, and answer with Comment, not Close with comment.",
 ]
@@ -78,11 +83,14 @@ def planned_files(a):
     """(relative path, text) for every generated file. Strings that reach YAML are written as JSON strings."""
     values = {"repo": json.dumps(a.repo), "stack": json.dumps(a.stack, ensure_ascii=False)}
     plain = {"project": a.project or a.repo.split("/")[1], "owner": a.owner, "stack": a.stack}
-    return [
+    files = [
         (".github/github-loop.json", settings_file(a.owner, a.owner_name, a.language)),
         (".github/ISSUE_TEMPLATE/autopilot.yml", render(template("autopilot-issue-form.yml"), values)),
         ("CLAUDE.md", render(template("project-claude.md"), plain)),
     ]
+    if getattr(a, "install_events", False):
+        files.append((".github/workflows/loop-fire.yml", template("loop-fire.yml")))
+    return files
 
 
 def write(root, rel, text, force, dry_run):
@@ -164,6 +172,8 @@ def parser():
     ap.add_argument("--project", default=None, help="project name for the starter CLAUDE.md (default: the repo name)")
     ap.add_argument("--dir", default=None, help="the checkout to write into (default: the current git checkout)")
     ap.add_argument("--install-skill", action="store_true", help="also copy this skill into the checkout")
+    ap.add_argument("--install-events", action="store_true",
+                    help="also write the loop-fire workflow that starts Lead and Code on GitHub events")
     ap.add_argument("--create-labels", action="store_true", help="create the loop labels on GitHub")
     ap.add_argument("--prompts", action="store_true", help="include the scheduled-task prompts in the report")
     ap.add_argument("--force", action="store_true", help="replace files that already exist and differ")
