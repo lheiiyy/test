@@ -119,3 +119,58 @@ test('trips are listed newest date first', () => {
   svc.addTrip(trip({ trip_date: '2026-01-06', start_km: 1020, end_km: 1030 }));
   assert.deepEqual(svc.listTrips().map((t) => t.trip_date), ['2026-01-07', '2026-01-06', '2026-01-05']);
 });
+
+test('export lists the four tables with row counts, voided rows included', () => {
+  const { svc, bike, trip } = setup();
+  const t = svc.addTrip(trip());
+  svc.voidTrip(t.id);
+  const tables = svc.listExportTables();
+  assert.deepEqual(tables.map((x) => x.table), ['vehicles', 'trips', 'lookups', 'audit_log']);
+  const count = (name) => tables.find((x) => x.table === name).rows;
+  assert.equal(count('vehicles'), 1);
+  assert.equal(count('trips'), 1);
+  assert.equal(count('lookups'), 3);
+  assert.ok(count('audit_log') >= 6);
+  assert.ok(bike.id);
+});
+
+test('export builds a CSV with a fixed header and a dated file name', () => {
+  const repo = createRepository({ storage: memoryStorage(), user: 'tester', now: () => new Date('2026-03-04T10:00:00Z') });
+  const svc = createServices(repo, { now: () => new Date('2026-03-04T10:00:00Z') });
+  svc.addVehicle({ name: 'Test Bike', plate: 'TEST-001', fuel_type: 'Gasoline', start_odometer_km: '1000' });
+  const out = svc.exportCsv('vehicles');
+  assert.equal(out.filename, 'odometer-vehicles-2026-03-04.csv');
+  assert.equal(out.rows, 1);
+  const lines = out.csv.slice(1).split('\r\n');
+  assert.equal(lines[0], 'id,name,plate,fuel_type,start_odometer_km,created_at,created_by,updated_at,updated_by,is_active,row_version');
+  assert.match(lines[1], /^VEH-000001,Test Bike,TEST-001,Gasoline,1000,/);
+  assert.match(lines[1], /,true,1$/);
+});
+
+test('exported trips include voided rows and no distance column', () => {
+  const { svc, trip } = setup();
+  const t = svc.addTrip(trip({ destination: 'Shop, "North"' }));
+  svc.voidTrip(t.id);
+  const out = svc.exportCsv('trips');
+  const [header, row] = out.csv.slice(1).split('\r\n');
+  assert.ok(!header.includes('distance'));
+  assert.match(row, /"Shop, ""North"""/);
+  assert.match(row, /Voided,/);
+  assert.match(row, /,false,2$/);
+});
+
+test('an export changes no data: row_version and audit_log stay the same', () => {
+  const { repo, svc, trip } = setup();
+  svc.addTrip(trip());
+  const before = JSON.stringify(['vehicles', 'trips', 'lookups', 'audit_log'].map((t) => repo.list(t, { includeInactive: true })));
+  for (const { table } of svc.listExportTables()) svc.exportCsv(table);
+  const after = JSON.stringify(['vehicles', 'trips', 'lookups', 'audit_log'].map((t) => repo.list(t, { includeInactive: true })));
+  assert.equal(after, before);
+});
+
+test('an unknown table is rejected', () => {
+  const { svc } = setup();
+  rejects(() => svc.exportCsv('fuel'), 'table', /Unknown table/);
+  rejects(() => svc.exportCsv('__proto__'), 'table');
+  rejects(() => svc.exportCsv(undefined), 'table');
+});
