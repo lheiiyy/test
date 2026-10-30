@@ -3,7 +3,12 @@
 ## M1 Trips (issue #25): built, awaiting review and merge
 
 - Done: schema (8 tables, ID keys, six audit columns), mock transport, repositories, trip status flow, role check, audit log.
-- Not in M1: screens, `api.js`, real Sheets transport, deploy (manual step for the owner, later).
+- Not in M1: real Sheets transport, deploy (manual step for the owner, later).
+
+## M1 screens (issue #27, PR #28): built, awaiting review and merge
+
+- Done: `listTrips`, `getTrip`, `lookups`, `updateTrip` services; `src/api.js` (mock transport, `{ok, data}` or `{ok:false, error}`); trip list and trip form in `src/web/` with a role switcher for the mock user; design tokens in `app.css` and `CLAUDE.md`.
+- Not in this slice: expenses, liquidation, monitoring, real Sheets transport, Apps Script deploy.
 
 ## Decisions
 
@@ -21,6 +26,20 @@
 
 Command: `npm test` (or `node --test 'tests/*.test.js'`) in `trip-monitoring/`.
 Result: 22 tests, 22 pass, 0 fail, 0 skipped.
+
+## M1 screens decisions
+
+- No dependency: a small loader in `src/web/app.js` runs the CommonJS `src/` files in the browser, each in its own hidden iframe so top-level names cannot clash.
+- Mock state and the acting user are kept in `sessionStorage` so list and form pages share data; closing the tab resets it. `api.exportState()` and `transport.snapshot()` are mock only.
+- `src/web/seed.js` repeats the dummy fixture for the browser; a test keeps it equal to `tests/fixtures/seed.json`.
+- The UI hides actions by role but the services still refuse every wrong call (tested).
+- Requestor or driver see their own trips; supervisor, accounting and admin see all.
+- Found while testing: `.btn` overrode `hidden`, so a supervisor saw "New trip"; fixed with `[hidden]` in `app.css`.
+- Playwright is used by `tests/screens.test.js` but is not a project dependency; it must be installed where tests run (preinstalled in cloud sessions).
+
+## M1 screens test results
+
+Command: `npm test` in `trip-monitoring/`. Result: 38 tests, 38 pass, 0 fail, 0 skipped. Browser flows run with no console errors; 15 screenshots at 1280, 768 and 375 px.
 
 ## Not run (cloud session)
 

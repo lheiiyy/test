@@ -79,4 +79,8 @@ Files in scope: trip-monitoring/, CLAUDE.md
 - [ ] Check the proposed design tokens (section 2); reply `REVISE:` to change them.
 - [ ] Later: real Sheet, Apps Script project and deploy (not in this slice).
 
-AWAITING APPROVAL
+APPROVED by lheiiyy on 2026-10-30
+
+## Status
+
+Built on branch `claude/m1-screens` (PR #28), ready for review. Tasks 1 to 6 done. `npm test`: 38 tests, 38 pass, 0 fail, 0 skipped (22 existing, 4 service, 9 api, 3 browser flows). Screenshots: `trip-monitoring/docs/screens/m1-screens/` (list, list-empty, form-draft, form-submitted, form-completed at 1280, 768, 375).
