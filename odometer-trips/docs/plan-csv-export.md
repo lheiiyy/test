@@ -80,4 +80,15 @@ Files in scope: odometer-trips/app/, odometer-trips/tests/, odometer-trips/docs/
 2. After the merge, on the tablet: open the app (Settings → Pages → deploy from branch `main`, folder root, then `/odometer-trips/app/`), tap each Export button, and check that the file downloads and opens. Use test data only until you have checked this.
 3. Do not turn on "required approvals" on `main`.
 
-AWAITING APPROVAL
+APPROVED by Leo on 2026-10-30 (relayed from chat)
+
+## Status
+
+Built on `claude/csv-export` (PR #15), awaiting the Lead's review.
+
+- **Done:** tasks 1 to 5. `app/csv.js` (new), export in `app/services.js` and `app/api.js`, the Export section in `app/index.html`, `app/main.js` and `app/styles.css`, tests in `tests/unit/` and `tests/e2e/trip-flow.cjs`.
+- **Run:** `node --test 'odometer-trips/tests/unit/*.test.mjs' odometer-trips/tests/readme.test.mjs` and `node odometer-trips/tests/e2e/trip-flow.cjs` (needs Playwright).
+- **Results (2026-10-30):** unit tests 43 of 43 pass (30 earlier plus 13 new). Browser check passes at 1280, 768 and 375 px with no console errors, no failed requests and no sideways scroll; it downloads the trips CSV and checks the header, the quoting and the byte order mark.
+- **Decisions:** no schema change, no new dependency; an export writes no audit row; file name uses the injected clock; the API takes a `now` option that the services use for the file date. Task 6 was done by the main run, not a haiku subagent.
+- **Not tested here:** how Leo's tablet browser saves and opens the download. Do this by hand after the merge, with test data only.
+- **Known limits:** export is a copy and a check, not a restore; import comes with Phase 3 and must remove the leading apostrophe on text that starts with `=`, `+`, `-` or `@`.
