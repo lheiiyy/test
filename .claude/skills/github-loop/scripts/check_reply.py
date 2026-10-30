@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Check an agent reply before it is posted to a GitHub issue.
 
-Usage: check_reply.py reply.md --turn N --add to-chat --remove code-working [--from code|lead] [--session sonnet]
+Usage: check_reply.py reply.md --turn N --add needs-leo --remove code-working [--from code|lead] [--session sonnet]
 Prints a JSON report and exits 1 if anything is wrong.
 
 Also importable: check(text, turn, add, remove, max_words, expect_from, session) returns the same report.
@@ -46,8 +46,8 @@ from rules import declared_scope, scope_problems  # noqa: E402
 HEADER = re.compile(r"<!--\s*loop:v1\s+([^>]*?)-->")
 URL = re.compile(r"https?://\S+")
 SHA = re.compile(r"\A[0-9a-f]{40}\Z")
-ALLOWED_ADD = {"to-chat", "needs-leo", "done", "awaiting-approval", "to-review", "reviewed"}
-TYPES = {"result", "question", "status", "plan", "summary", "verdict", "approval"}
+ALLOWED_ADD = {"needs-leo", "done", "awaiting-approval", "to-review", "reviewed"}
+TYPES = {"result", "question", "plan", "summary", "verdict", "approval"}
 PHASE_FOR_TYPE = {"plan": "1", "summary": "2", "verdict": "2"}
 LIMITS = {"summary": 250, "verdict": 400}
 REPORT_LINES = ["implemented and tested", "reviewed", "merged", "deployed", "blocked or unverified"]

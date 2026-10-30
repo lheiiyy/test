@@ -1,6 +1,6 @@
 ---
 name: github-loop
-description: Coordinate the repo owner (Product Owner), a Lead (Claude Cowork or a chat session, Technical Lead) and Claude Code (Engineer) through GitHub Issues and pull requests, with no copy-paste relay. Autopilot mode runs plan with readiness check, one approval, build, independent review, fix, scripted merge, verify, deploy when authorized, and report. Use whenever the owner says "send to Code", "check the loop", "set up the loop", "autopilot", "plan then build" or "review the PR", or replies APPROVED, REVISE or CONTINUE on an issue. Also use it when an issue labeled to-code, awaiting-approval, to-review, reviewed or to-chat is in front of you, when a scheduled task fires for the loop, or when drafting an issue for Claude Code, even if "loop" is never said. It routes each step to the right experts and model (sonnet by default, opus only on risk), keeps high-risk merges with the owner, reopens approvals closed by mistake, flags stalled runs, and works in any repository or account.
+description: Coordinate the repo owner (Product Owner), a Lead (Claude Cowork or a chat session, Technical Lead) and Claude Code (Engineer) through GitHub Issues and pull requests, with no copy-paste relay. It runs plan with readiness check, one approval, build, independent review, fix, scripted merge, verify, deploy when authorized, and report. Use whenever the owner says "send to Code", "check the loop", "set up the loop", "autopilot", "plan then build" or "review the PR", or replies APPROVED, REVISE or CONTINUE on an issue. Also use it when an issue labeled to-code, awaiting-approval, to-review or reviewed is in front of you, when a scheduled task fires for the loop, or when drafting an issue for Claude Code, even if "loop" is never said. It routes each step to the right experts and model (sonnet by default, opus only on risk), keeps high-risk merges with the owner, reopens approvals closed by mistake, flags stalled runs, and works in any repository or account.
 ---
 
 # github-loop
@@ -23,11 +23,11 @@ GitHub is the shared source of truth. Issues carry requests and hand-offs, pull 
 - High-risk work (rules in `scripts/rules.py`: auth and permissions, secrets, schema and migrations, deploys, `.github/`, the skill itself, or `Risk: high` in the plan) is merged by the owner: a Merge tap, or the owner's own `MERGE ...` words in a chat session. So is a PR that changes a file outside the plan's `Files in scope:` line.
 - Nothing overrides platform permissions, repository rules or security controls. Self-review is not review.
 
-## Lifecycle (autopilot mode)
+## Lifecycle
 
 INSPECT → PLAN + READINESS (Lead) → APPROVE ONCE (owner) → BUILD + TEST (Code) → REVIEW (Lead) → FIX (Code) → MERGE through the scripted gate (Code; the owner for high risk) → VERIFY → DEPLOY WHEN AUTHORIZED → REPORT (Code; the issue closes).
 
-An issue is in autopilot mode when its body has Phase 1 and Phase 2 headings (`references/task-template.md` or the Autopilot issue form). Any other issue is classic mode (`references/classic.md`).
+A request is an issue whose body has Phase 1 and Phase 2 headings (`references/task-template.md` or the Autopilot issue form). The loop does nothing with any other issue, except that a `to-code` label on one gets a single note from Code on how to file it properly.
 
 The owner files the request and approves the plan (`APPROVED` on the issue, or in a chat with the Lead). **Tap Comment, not "Close with comment"**: closing hides the issue; triage reopens it within 48 hours unless it was closed as "not planned".
 
@@ -35,18 +35,17 @@ The owner files the request and approves the plan (`APPROVED` on the issue, or i
 
 | Label | Next actor |
 |---|---|
-| `to-code` | Lead plans (autopilot); Code works (classic). The only label that starts work; only the owner or the issue form adds it. |
+| `to-code` | Lead plans. The only label that starts work; only the owner or the issue form adds it. |
 | `awaiting-approval` | Owner: `APPROVED` or `REVISE: <notes>` |
 | `code-working` | A run of either role holds the claim |
 | `to-review` | Lead reviews the exact head Code named |
 | `reviewed` | Code merges (verdict approved) or fixes (changes requested) |
 | `needs-leo` | Owner: `CONTINUE: <answer>` or `REVISE: <notes>` (the label keeps its name in every repo) |
-| `to-chat` | Classic only: the chat planner |
 | `done` | Finished and closed |
 
 ## Message headers
 
-First line of every agent comment: `<!-- loop:v1 from=code|lead|chat type=TYPE [phase=1|2] [pr=N head=SHA] [verdict=approved|changes] turn=N -->`
+First line of every agent comment: `<!-- loop:v1 from=code|lead type=TYPE [phase=1|2] [pr=N head=SHA] [verdict=approved|changes] turn=N -->`
 
 | Type | From | Rule |
 |---|---|---|
@@ -56,7 +55,6 @@ First line of every agent comment: `<!-- loop:v1 from=code|lead|chat type=TYPE [
 | `summary` | code | phase=2. Five lines: Implemented and tested / Reviewed / Merged / Deployed / Blocked or unverified. |
 | `question` | either | Posted by `park` |
 | `approval` | lead | Relays the owner's chat approval: `APPROVED by <name> in chat on <date>: "APPROVED ..."`. Chat only. |
-| `task`, `result`, `status` | chat, code | Classic mode |
 
 A plan, phase 2 result, verdict and summary also carry one `Model: <tier>` line. The scripts refuse a reply that breaks a rule.
 
@@ -68,8 +66,8 @@ Run the scripts from the skill folder (`.claude/skills/github-loop/` in a repo) 
    - A summary starting `No new work.` → say exactly that and stop.
    - Exit code 2 or `TRIAGE FAILED` → report the error and stop. A failure is never "No new work."
 2. **Reopen** each `reopen` entry with `python scripts/loop_gh.py reopen --repo <o>/<r> --issue <N>`, then run triage again.
-3. **Park.** Code parks each `needs_leo` and `stale` entry: `python scripts/loop_gh.py park --repo <o>/<r> --issue <N> --turn <next_turn> --reason "<reason>"` (add `--phase <phase>` for autopilot entries). Either role parks each `stalled` entry: `park --from <your role> --phase <phase> --turn <next_turn> --reason "No <for_role> run picked up the <work_type> for <waiting_minutes> min; check the <for_role> scheduled task, then reply CONTINUE:"`. Never post a status comment instead.
-4. **One issue per run.** Take the first `work` entry. Lead work: `references/lead.md`. Code work: `references/autopilot.md`. Classic: `references/classic.md`.
+3. **Park.** Code parks each `needs_leo` and `stale` entry: `python scripts/loop_gh.py park --repo <o>/<r> --issue <N> --turn <next_turn> --reason "<reason>"` (add `--phase <phase>` when the entry has a phase; a `to-code` issue without Phase 1 and Phase 2 headings has none). Either role parks each `stalled` entry: `park --from <your role> --phase <phase> --turn <next_turn> --reason "No <for_role> run picked up the <work_type> for <waiting_minutes> min; check the <for_role> scheduled task, then reply CONTINUE:"`. Never post a status comment instead.
+4. **One issue per run.** Take the first `work` entry. Lead work: `references/lead.md`. Code work: `references/autopilot.md`.
 5. **Route the step** (plan, revise, build, fix and review): `python3 scripts/route.py --step <step> [--paths ... | --git-range ...] --text <issue body file> --session <model>`. Read only the expert notes it lists; its `model` part is the `scripts/pick_model.py` answer (tier, `run inline` or `delegate`, the true `model_line`). Merge, verify and the report are scripted steps with no routing (`pick_model.py --step merge|verify|report` gives their Model line).
 6. **Verify the hand-off.** After a post succeeds, run triage once more: the issue must have left your `work` list. If not, check the labels once, retry once, then park with what you saw.
 
@@ -82,7 +80,7 @@ Merges only when: the owner approved the latest plan and no `REVISE:` came after
 - **Only `to-code` starts work, and agents never add it**, so the loop cannot trigger itself.
 - **Keywords count only from the owner**, at the very start of a comment, in capitals, after the latest agent reply. `REVISE:` cancels an approval until a revised plan is posted; `CONTINUE:` keeps it, but a file outside the plan's scope still waits for the owner at the merge. Agent comments start with a header, so they never read as keywords.
 - **A relayed approval** comes only from a chat Lead and quotes the owner's words, which must start with `APPROVED`; the final summary repeats the quote.
-- **Caps:** 20 agent replies, 3 plan revisions, 4 change requests (autopilot); 4 turns (classic). Stale claims surface after 90 minutes (180 for a build); each role parks the other's work untouched for 180 minutes (`stalled`).
+- **Caps:** 20 agent replies, 3 plan revisions, 4 change requests. Stale claims surface after 90 minutes (180 for a build); each role parks the other's work untouched for 180 minutes (`stalled`).
 - **`finish` needs a merged PR** (or `No PR: yes` in the issue), so an open PR is never reported as done.
 - **The repo may be public:** only the owner's issues and comments count, and nothing confidential is committed.
 - **One issue per run, one reply per run.** Lists are read to the last page; rate limits and server errors are retried, then reported as a failure.

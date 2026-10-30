@@ -10,7 +10,6 @@ Code (Claude Code, Engineer):
     loop_gh.py merge   --repo o/r --issue N --pr P [--method merge] [--require-checks]
     loop_gh.py verify  --repo o/r --issue N --pr P
     loop_gh.py finish  --repo o/r --issue N --pr P --file summary.md --turn T
-    loop_gh.py reply   --repo o/r --issue N --file reply.md --turn T --add to-chat    (classic mode)
 Either role:
     loop_gh.py claim   --repo o/r --issue N
     loop_gh.py reopen  --repo o/r --issue N
@@ -89,8 +88,7 @@ from loop_guard import (approval_status, first_header, plan_facts, review_status
 from rules import outside_scope, risk_tier, scope_problems  # noqa: E402
 
 GhError = ApiError  # older name, kept for callers
-HANDOFF = {"to-chat", "needs-leo", "done"}
-WAITING = ["to-code", "awaiting-approval", "needs-leo", "to-review", "reviewed"]
+WAITING =["to-code", "awaiting-approval", "needs-leo", "to-review", "reviewed"]
 GOOD = {"success", "neutral", "skipped"}
 NO_PR = re.compile(r"(?im)^[ \t>*-]*No PR[ \t]*:[ \t]*\**[ \t]*yes\b")
 
@@ -198,14 +196,6 @@ def deliver(a, plan, report, add, remove):
     return out
 
 
-def checked_post(a, plan, add, remove, want_type, expect_from="code", want_phase=None):
-    report = read_reply(a, add, want_type, expect_from, want_phase)
-    if not report["ok"]:
-        report.pop("text", None)
-        return 1, report
-    return 0, deliver(a, plan, report, add, remove)
-
-
 def cmd_claim(a, plan):
     present = WAITING
     if not a.dry_run:
@@ -217,12 +207,6 @@ def cmd_claim(a, plan):
     add_label(a.repo, a.issue, "code-working", a.dry_run, plan)
     remove_labels(a.repo, a.issue, present, a.dry_run, plan)
     return 0, {"ok": True, "claimed": a.issue}
-
-
-def cmd_reply(a, plan):
-    if a.add not in HANDOFF:
-        return 1, {"ok": False, "problems": [f"--add must be one of {sorted(HANDOFF)}"]}
-    return checked_post(a, plan, a.add, ["code-working"], None)
 
 
 def plan_file_problems(a):
@@ -474,7 +458,7 @@ def cmd_verify(a, plan):
     return (0 if out["ok"] else 7), out
 
 
-COMMANDS = {"claim": cmd_claim, "reply": cmd_reply, "park": cmd_park, "post-plan": cmd_post_plan,
+COMMANDS = {"claim": cmd_claim, "park": cmd_park, "post-plan": cmd_post_plan,
             "ready-for-review": cmd_ready_for_review, "verdict": cmd_verdict,
             "relay-approval": cmd_relay_approval, "merge": cmd_merge, "verify": cmd_verify,
             "finish": cmd_finish, "reopen": cmd_reopen}
@@ -493,7 +477,7 @@ def parser():
         p.add_argument("--config", default=None, help="settings file (default .github/github-loop.json)")
         p.add_argument("--session", default=None, help="the model this task runs on (checks a reply's Model line; "
                                                        "accepted and unused by commands that post none)")
-        if name in ("reply", "post-plan", "ready-for-review", "verdict", "finish"):
+        if name in ("post-plan", "ready-for-review", "verdict", "finish"):
             p.add_argument("--file", required=True)
             p.add_argument("--turn", type=int, required=True)
         if name in ("ready-for-review", "verdict", "merge", "verify"):
@@ -502,8 +486,6 @@ def parser():
             p.add_argument("--pr", type=int, default=None, help="the merged PR (omit only for `No PR: yes` issues)")
         if name in NEEDS_OWNER or name == "relay-approval":
             p.add_argument("--owner", default=None, help="the owner's login (default: config, then the repo owner)")
-        if name == "reply":
-            p.add_argument("--add", required=True)
         if name in ("park", "post-plan"):
             p.add_argument("--from", dest="sender", choices=("code", "lead"),
                            default="lead" if name == "post-plan" else "code")
