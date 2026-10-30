@@ -90,3 +90,30 @@ test('void goes through the API and is reflected in the list', async () => {
 test('an unknown transport is refused', async () => {
   await assert.rejects(createApi({ transport: 'rest' }), /Unknown transport/);
 });
+
+test('export: local and mock return the same shapes', async () => {
+  const local = await createApi({ transport: 'local', storage: memoryStorage(), now: () => new Date('2026-03-04T10:00:00Z') });
+  const mock = await createApi({ transport: 'mock', storage: memoryStorage(), fixtures, now: () => new Date('2026-03-04T10:00:00Z') });
+  for (const api of [local, mock]) {
+    const tables = await api.listExportTables();
+    assert.equal(tables.ok, true);
+    assert.deepEqual(tables.data.map((t) => t.table), ['vehicles', 'trips', 'lookups', 'audit_log']);
+    for (const t of tables.data) assert.deepEqual(keys(t), ['rows', 'table']);
+    const out = await api.exportCsv('lookups');
+    assert.equal(out.ok, true);
+    assert.deepEqual(keys(out.data), ['csv', 'filename', 'rows', 'table']);
+    assert.equal(out.data.filename, 'odometer-lookups-2026-03-04.csv');
+    assert.equal(out.data.rows, 3);
+  }
+  assert.equal((await mock.exportCsv('vehicles')).data.rows, 1);
+  assert.equal((await mock.exportCsv('trips')).data.rows, 1);
+});
+
+test('export: an unknown table returns the error shape', async () => {
+  const api = await createApi({ transport: 'local', storage: memoryStorage() });
+  const res = await api.exportCsv('fuel');
+  assert.equal(res.ok, false);
+  assert.deepEqual(keys(res.error), ['code', 'field', 'message']);
+  assert.equal(res.error.code, 'VALIDATION');
+  assert.equal(res.error.field, 'table');
+});
