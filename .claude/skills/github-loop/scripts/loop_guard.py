@@ -13,7 +13,7 @@ Two modes, picked from the issue body:
     code (Claude Code, Engineer):   build, fix, merge, continue (phase 2)
 
 Who may say what (autopilot):
-- The owner (the repo owner's login; Leo in lheiiyy/test), at the very start of a comment and
+- The owner (the repo owner's login, or "owner" in .github/github-loop.json), at the very start of a comment and
   in capitals: `APPROVED`, `REVISE: <notes>`, `CONTINUE: <answer>`.
 - Agents post from the owner's account too, but every agent comment starts with a
   loop:v1 header (`from=code` or `from=lead`), so it can never read as a keyword.

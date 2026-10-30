@@ -90,3 +90,16 @@ SKILL.md went from 14,619 to 10,664 characters; classic mode and recovery moved 
 | `python3 -B evals/test_scripts.py` | 187 run, 187 OK (6 new `ScopeTests`; plan fixtures gained a `Files in scope:` line) |
 | 6 hand-made mutations of the scope rules | 5 caught on the first run; the survivor (ignoring a missing scope line) led to two more assertions, and then it was caught too |
 | `flake8 --select F` on scripts and tests | 0 |
+
+## Follow-up: portable setup (2026-10-30)
+
+Branch `claude/loop-portable`, based on `main` at `84c8021`. The only GitHub writes are the branch push and the PR.
+
+| Command | Result |
+|---|---|
+| `python3 -B evals/test_scripts.py` on `main` before any change | 187 run, 187 OK |
+| `python3 -B evals/test_scripts.py` on this branch | 201 run, 201 OK (12 new `InitRepoTests`, 2 new `PostPlanRuleTests`; the package test also names the new files) |
+| 8 hand-made mutations of `init_repo.py` and the path fallback in `loop_gh.py` (overwrite without `--force`, unquoted YAML value, a placeholder that ships, `lead_deep` losing `--min-tier` or opus, no repo-root fallback, a traceback for a missing plan file, an undetected self-copy) | 5 caught on the first run; the 3 survivors led to 3 new tests, and then all 8 were caught |
+| `flake8 --select F` on scripts and tests | 0 |
+| `init_repo.py --install-skill --prompts` into an empty folder | 3 files plus the skill written; a second run reports `unchanged`; the generated issue form parses as YAML and has the same field ids as the live form |
+| Not run | A live scheduled task created from a rendered prompt; `--create-labels` against GitHub (dry run only); a second real repository |

@@ -2,10 +2,27 @@
 
 Do these in order, and confirm each step before the next. Everything works from a tablet browser except where noted. `<o>/<r>` is the repository and `<owner>` the Product Owner's GitHub login.
 
+## Quick start: a new repository in one command
+
+From a checkout of the target repository (or with `--dir <checkout>`), using a full copy of this skill:
+
+```
+python3 scripts/init_repo.py --repo <o>/<r> --owner <owner> --owner-name <name> --language <language> --install-skill --create-labels --prompts
+```
+
+It writes `.github/github-loop.json`, the Autopilot issue form (Repo field filled in; add `--stack "<text>"` for the Stack default) and a starter `CLAUDE.md`, copies this skill to `.claude/skills/github-loop/`, creates the labels, and prints the Code, Lead and Lead Deep task prompts. A file that already exists is kept (`--force` replaces it), and `--dry-run` shows the plan. Then:
+
+1. Put the new files in a pull request. The skill folder and `.github/` are high risk, so the owner merges it.
+2. Create the two hourly tasks from the printed prompts (step 2 below).
+3. Fill in the starter `CLAUDE.md`: what the project is, the test command, the folders the loop may touch.
+4. File one small request with the issue form, and answer it with **Comment**.
+
+The steps below are the same work by hand, and the reference for each part.
+
 ## 1. Repository
 
 1. **Put the skill in the repo** as `.claude/skills/github-loop/` through a PR. Scheduled runs and any Claude Code session in the repo read it from the default branch. To install it elsewhere, run `python3 scripts/package.py --out github-loop.zip` and unzip it into the other repo, or upload the zip as a skill in claude.ai for chat sessions on any account. An account copy without `scripts/` is not enough: the steps call the scripts.
-2. **Settings (optional):** add `.github/github-loop.json`, for example `{"owner": "<owner>", "owner_name": "Leo", "language": "Taglish"}`. Without it the scripts use the repo's owner (a personal repo) and English. An organization repo must set `owner`, and may add `"owner_associations": ["OWNER", "MEMBER"]`. Other keys: `base`, `branch_prefix`, `improve` (`scripts/config.py`).
+2. **Settings (optional):** add `.github/github-loop.json`, for example `{"owner": "<owner>", "owner_name": "<name>", "language": "<language>"}`. Without it the scripts use the repo's owner (a personal repo) and English. An organization repo must set `owner`, and may add `"owner_associations": ["OWNER", "MEMBER"]`. Other keys: `base`, `branch_prefix`, `improve` (`scripts/config.py`).
 3. **Create the labels.** Run `python scripts/readiness.py --repo <o>/<r> --create-labels`, or create them by hand:
 
    | Label | Color |
@@ -18,7 +35,7 @@ Do these in order, and confirm each step before the next. Everything works from 
    | `needs-leo` | `D93F0B` (the name stays the same in every repo) |
    | `done` | `6E7781` |
    | `to-chat` | classic mode only |
-4. **Add the issue form** `.github/ISSUE_TEMPLATE/autopilot.yml`, copied from `lheiiyy/test`, and change its Repo field's default to `<o>/<r>`. It files the request with `to-code` already applied.
+4. **Add the issue form** `.github/ISSUE_TEMPLATE/autopilot.yml`: `init_repo.py` writes it, or copy `references/templates/autopilot-issue-form.yml` and replace `{{repo}}` and `{{stack}}`. It files the request with `to-code` already applied.
 5. **Keep one short `CLAUDE.md` per project:** the stack rules and the folders the loop may touch.
 6. **Protect `main` the loop-compatible way:** require pull requests and status checks, but do **not** require approvals. Every agent posts as the owner, and GitHub never lets a PR author approve their own PR, so a required-approval rule stops every merge. High-risk and out-of-scope PRs already wait for the owner's Merge tap (merge exits 8 and 9).
 
@@ -26,13 +43,12 @@ Do these in order, and confirm each step before the next. Everything works from 
 
 Both are hourly cloud tasks. Recommended settings: permission mode "auto", only the Claude Code Remote connector (least privilege; remove Gmail, Drive and Sheets unless a project needs them), and **Sonnet** for both. `scripts/route.py` says when a step needs Opus (`references/models.md`); a task set to Opus pays Opus for every step. A scheduled run showed no subagent use, so the dependable way to get Opus for sensitive plans and reviews is the optional **Lead Deep** task below. The owner can force a model per request with the Model field of the issue form. A task's own model is changed from chat by asking Claude, or in claude.ai. Turn on **push notifications** for both tasks, so a failed or silent run reaches the phone.
 
-**Code task** (for example at minute 03):
-> You are Code, the Engineer of the github-loop for `<o>/<r>` (owner `<owner>`). This task runs on `<model>`. Clone the repo into a fresh empty directory. Run `export PYTHONDONTWRITEBYTECODE=1`, then `python3 .claude/skills/github-loop/scripts/triage.py --repo <o>/<r> --role code`. If the summary is "No new work.", end with exactly that. If triage fails, say so and stop. Otherwise follow `.claude/skills/github-loop/SKILL.md` (Every run, from step 2), and `references/autopilot.md` for autopilot work, passing `--session <model>` to every posting command. Use REST (`gh api`) only. Merge only with `scripts/loop_gh.py merge`; on exit 8 or 9 or a refused merge, park and ask the owner for one Merge tap, and never work around a refusal. Never push to main, force-push, add `to-code`, relay an approval, review your own work, commit secrets, or delete files outside the approved plan. Act only on the owner's issues and comments. One issue per run. Final message: one line in `<language>`, or exactly "No new work."
+**Prompts.** `init_repo.py --prompts` prints them filled in; the text lives in `references/templates/code-task.md` and `references/templates/lead-task.md` (one source: change a rule there, not in a copy). Paste each as the task prompt.
+- **Code task** (for example at minute 03): triage with `--role code`, then the build, fix, merge and report steps in `references/autopilot.md`.
+- **Lead task** (for example at minute 33, so a review follows a build by about 30 minutes): triage with `--role lead`, then `references/lead.md`.
+- Both end with exactly "No new work." when idle, pass `--session <model>` to every posting command, use REST only, and act only on the owner's issues and comments.
 
-**Lead task** (for example at minute 33, so a review follows a build by about 30 minutes):
-> You are the Lead (Technical Lead) of the github-loop for `<o>/<r>` (owner `<owner>`). This task runs on `<model>`. Clone the repo into a fresh empty directory. Run `export PYTHONDONTWRITEBYTECODE=1`, then `python3 .claude/skills/github-loop/scripts/triage.py --repo <o>/<r> --role lead`. If the summary is "No new work.", end with exactly that. If triage fails, say so and stop. Otherwise follow `.claude/skills/github-loop/references/lead.md` for the first `work` entry, passing `--session <model>` to every posting command: plan with a readiness check, or review independently. Never write application code, never merge, never relay an approval (that happens only in a chat with the owner), never add `to-code`. Use REST only. Act only on the owner's issues and comments. Final message: one line in `<language>`, or exactly "No new work."
-
-**Lead Deep task (optional, only for sensitive work):** an Opus task every two hours (for example `18 */2 * * *`) with the Lead prompt above, but the triage command ends `--role lead --min-tier opus`, it says "You are Lead Deep, the Opus Technical Lead", and `<model>` is opus. An idle run costs almost nothing. Only after this task exists, add `--max-tier sonnet` to the normal Lead's triage command: opus-tier plans and reviews then wait up to 120 minutes (`--defer-minutes`) for Lead Deep, and the normal Lead takes them anyway after that, saying `wanted opus; ran inline` in its Model line. Without Lead Deep, leave `--max-tier` off.
+**Lead Deep task (optional, only for sensitive work):** an Opus task every two hours (for example `18 */2 * * *`) with the printed `lead_deep` prompt: the Lead prompt with the triage command ending `--role lead --min-tier opus`, the name "Lead Deep, the Opus Technical Lead" and the model opus. An idle run costs almost nothing. Only after this task exists, add `--max-tier sonnet` to the normal Lead's triage command: opus-tier plans and reviews then wait up to 120 minutes (`--defer-minutes`) for Lead Deep, and the normal Lead takes them anyway after that, saying `wanted opus; ran inline` in its Model line. Without Lead Deep, leave `--max-tier` off.
 
 **Watchdog:** each task parks the other's work that nobody picked up for 180 minutes (`--stall-minutes`), so a silent run shows up as a `needs-leo` issue. The owner's `CONTINUE:` resumes it.
 
@@ -59,7 +75,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: python3 -B .claude/skills/github-loop/evals/test_scripts.py
-      # add the project's own test command here, for example: node --test 'odometer-trips/tests/unit/*.test.mjs'
+      # add the project's own test command here
 ```
 
 ## 4. Release policy
