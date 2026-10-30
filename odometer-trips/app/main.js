@@ -1,4 +1,4 @@
-// Screens: vehicle form and list, trip form and list, void buttons.
+// Screens: vehicle form and list, trip form and list, void buttons, CSV export.
 // Talks only to api.js. Open with ?transport=mock to use the test fixtures.
 
 import { createApi } from './api.js';
@@ -79,6 +79,7 @@ async function refreshVehicles() {
         v.is_active ? voidButton(`Void vehicle ${v.plate}`, () => onVoidVehicle(v.id)) : null)),
   );
   $('vehicles-empty').hidden = vehicles.length > 0;
+  await refreshExports();
 
   const select = $('trip-vehicle');
   const previous = select.value;
@@ -106,6 +107,35 @@ async function refreshTrips() {
     }),
   );
   $('trips-empty').hidden = trips.length > 0;
+  await refreshExports();
+}
+
+async function refreshExports() {
+  const tables = await must(api.listExportTables());
+  $('export-list').replaceChildren(
+    ...tables.map((t) =>
+      el('li', { class: 'card', dataset: { table: t.table } },
+        el('div', { class: 'info' },
+          el('div', { class: 'title' }, t.table),
+          el('div', { class: 'meta' }, t.rows === 0 ? 'No rows yet (header only)' : `${t.rows} row${t.rows === 1 ? '' : 's'}`)),
+        el('button', { type: 'button', class: 'export', 'aria-label': `Export ${t.table}`, onclick: () => onExport(t.table) }, 'Export'))),
+  );
+}
+
+// The only browser-specific step: turn CSV text into a file download.
+function download(filename, csv) {
+  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  const a = el('a', { href: url, download: filename });
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+async function onExport(table) {
+  const res = await api.exportCsv(table);
+  showMessage($('export-error'), res.ok ? '' : res.error.message);
+  if (res.ok) download(res.data.filename, res.data.csv);
 }
 
 async function fillStartKm() {

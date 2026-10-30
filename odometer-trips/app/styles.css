@@ -56,3 +56,5 @@ button.secondary.confirm { background: var(--danger); color: #fff; }
 .card.voided { opacity: .6; }
 .card.voided .title { text-decoration: line-through; }
 .status { font-size: .8rem; font-weight: 700; color: var(--danger); margin-left: 6px; }
+
+button.export { margin: 0; width: auto; min-width: 88px; }
