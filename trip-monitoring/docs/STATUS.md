@@ -1,11 +1,11 @@
 # Status: Trip Monitoring
 
-## M1 Trips (issue #25): built, awaiting review and merge
+## M1 Trips (issue #25): merged
 
 - Done: schema (8 tables, ID keys, six audit columns), mock transport, repositories, trip status flow, role check, audit log.
 - Not in M1: real Sheets transport, deploy (manual step for the owner, later).
 
-## M1 screens (issue #27, PR #28): built, awaiting review and merge
+## M1 screens (issue #27, PR #28): merged (a41046c), Lead approved head f397295
 
 - Done: `listTrips`, `getTrip`, `lookups`, `updateTrip` services; `src/api.js` (mock transport, `{ok, data}` or `{ok:false, error}`); trip list and trip form in `src/web/` with a role switcher for the mock user; design tokens in `app.css` and `CLAUDE.md`.
 - Not in this slice: expenses, liquidation, monitoring, real Sheets transport, Apps Script deploy.
