@@ -1,5 +1,7 @@
 # Plan: github-loop event triggers (fire Lead and Code on GitHub events)
 
+> **Moved:** the event-first rebuild put the router, the fire script, their tests and the workflow template inside the skill (`scripts/route_event.py`, `scripts/fire.py`, `evals/`, `references/templates/loop-fire.yml`) and removed `.github/loop-fire/`. Paths below are as planned. Current instructions: `.claude/skills/github-loop/references/events.md`.
+
 Request: issue #16. Earlier loop plan: `docs/plan-loop-autopilot.md`. Loop rules: `.claude/skills/github-loop/SKILL.md`. Status document: this file's `## Status` section (Code adds it).
 
 ## 1. Business plan

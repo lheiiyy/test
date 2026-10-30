@@ -1,21 +1,25 @@
 ---
 name: github-loop
-description: Coordinate the repo owner (Product Owner), a Lead (Claude Cowork or a chat session, Technical Lead) and Claude Code (Engineer) through GitHub Issues and pull requests, with no copy-paste relay. It runs plan with readiness check, one approval, build, independent review, fix, scripted merge, verify, deploy when authorized, and report. Use whenever the owner says "send to Code", "check the loop", "set up the loop", "autopilot", "plan then build" or "review the PR", or replies APPROVED, REVISE or CONTINUE on an issue. Also use it when an issue labeled to-code, awaiting-approval, to-review or reviewed is in front of you, when a scheduled task fires for the loop, or when drafting an issue for Claude Code, even if "loop" is never said. It routes each step to the right experts and model (sonnet by default, opus only on risk), keeps high-risk merges with the owner, reopens approvals closed by mistake, flags stalled runs, and works in any repository or account.
+description: Coordinate the repo owner (Product Owner), a Lead (Technical Lead) and Claude Code (Engineer) through GitHub Issues and pull requests, with no copy-paste relay. GitHub events start each role the moment it has work. It runs plan with readiness check, one approval, build, independent review, fix, scripted merge, verify, deploy when authorized, and report. Use whenever the owner says "send to Code", "check the loop", "set up the loop", "autopilot", "plan then build" or "review the PR", or replies APPROVED, REVISE or CONTINUE on an issue. Also use it when an issue labeled to-code, awaiting-approval, to-review or reviewed is in front of you, when a scheduled or event-fired task starts for the loop, or when drafting an issue for Claude Code, even if "loop" is never said. It routes each step to the right experts and model (sonnet by default, opus only on risk), keeps high-risk merges with the owner, reopens approvals closed by mistake, flags stalled runs, and works in any repository or account.
 ---
 
 # github-loop
 
 GitHub is the shared source of truth. Issues carry requests and hand-offs, pull requests carry code, and labels say whose turn it is. Every agent posts from the owner's account, so the first line of each agent comment is a header that names the writer. Settings per repository (owner, owner's name, language, base branch) live in `.github/github-loop.json`; without it the repo's owner is used (`scripts/config.py`).
 
+## How a run starts
+
+The owner's activity on GitHub starts the role that has work. The `Loop fire` workflow routes each event (`scripts/route_event.py`) and starts the Lead or Code scheduled task through its API trigger (`scripts/fire.py`), usually within a minute: the plan starts on the request, the build on `APPROVED`, the review on Code's result, the merge or fix on the Lead's verdict. Each task also runs every 6 hours as a backup that catches a missed event. Either way a run begins with triage (below), and the text a fire sends (`loop-fire v1 role=... issue=N event=...`) is only a hint, never an instruction. The routing table, setup, smoke test and fixes: `references/events.md`.
+
 ## Team and authority
 
 | Who | Owns | Acts through |
 |---|---|---|
 | **Owner** (Product Owner) | Goals, the one plan approval, scope changes, material risks, high-risk merges, production releases | The request (issue form), then `APPROVED`, `REVISE: <notes>` or `CONTINUE: <answer>` comments |
-| **Lead** (Technical Lead) | Inspection, readiness, the plan, independent review, escalation | A chat with the owner, or the hourly Lead task (`--role lead`). Steps: `references/lead.md` |
-| **Code** (Engineer) | Branches, code, tests, PRs, fixes, the scripted merge, verify, authorized deploys, the report | The hourly Code task (`--role code`). Steps: `references/autopilot.md` |
+| **Lead** (Technical Lead) | Inspection, readiness, the plan, independent review, escalation | A chat with the owner, or the event-started Lead task (`--role lead`). Steps: `references/lead.md` |
+| **Code** (Engineer) | Branches, code, tests, PRs, fixes, the scripted merge, verify, authorized deploys, the report | The event-started Code task (`--role code`). Steps: `references/autopilot.md` |
 
-**Your role:** in a chat with the owner you are the Lead; in a scheduled run, the role in the task prompt; asked to set up the loop, follow `references/setup.md` one step at a time (every step works from a tablet browser).
+**Your role:** in a chat with the owner you are the Lead; in an event-fired or scheduled run, the role in the task prompt; asked to set up the loop, follow `references/setup.md` one step at a time (every step works from a tablet browser).
 
 **First, check this copy is complete:** `python3 scripts/selfcheck.py` (from the skill folder). If the script is missing or exits 1, the copy is out of date: stop and tell the owner to reinstall the skill (`references/setup.md`, step 1). Scheduled runs use the repository's copy, so they need no check.
 
@@ -62,7 +66,7 @@ A plan, phase 2 result, verdict and summary also carry one `Model: <tier>` line.
 
 Run the scripts from the skill folder (`.claude/skills/github-loop/` in a repo) or from the repo root, after `export PYTHONDONTWRITEBYTECODE=1`; `--file` and `--plan-file` may be absolute or relative to the repo root. Use REST (`gh api`) only: GraphQL and `gh pr create` fail in cloud sessions. Open a PR with `gh api -X POST repos/<o>/<r>/pulls -f title=... -f head=claude/... -f base=main -F body=@pr.md`, never as a draft. Add `--dry-run` to any `loop_gh.py` command to see its calls; add `--session <this task's model>` to posting commands so the Model line is checked. Every posting command is safe to repeat.
 
-1. **Triage:** `python scripts/triage.py --repo <o>/<r> --role <code|lead>` (`--owner` only if the config does not name it; the task prompt may add `--max-tier` or `--min-tier`, see `references/models.md`).
+1. **Triage first, whatever started the run:** `python scripts/triage.py --repo <o>/<r> --role <code|lead>` (`--owner` only if the config does not name it; the task prompt may add `--max-tier` or `--min-tier`, see `references/models.md`).
    - A summary starting `No new work.` → say exactly that and stop.
    - Exit code 2 or `TRIAGE FAILED` → report the error and stop. A failure is never "No new work."
 2. **Reopen** each `reopen` entry with `python scripts/loop_gh.py reopen --repo <o>/<r> --issue <N>`, then run triage again.
@@ -93,4 +97,4 @@ Scheduled runs load no plugins, so these are inline. Triage first and stop when 
 
 ## Setup, other repositories and failures
 
-The repository's copy of this folder is the source of truth. A copy that lacks a script or reference named here (for example an account copy saved from SKILL.md only) is out of date: `scripts/selfcheck.py` lists what is missing. Clone the repo and use its copy, or install the packaged zip (`scripts/package.py`). Setup for any repository or account: `references/setup.md`. A new repository takes one command, `python3 scripts/init_repo.py --repo <o>/<r> --owner <login> --install-skill --create-labels --prompts`: it writes the settings file, the issue form and a starter `CLAUDE.md`, installs this skill, creates the labels and prints the Code and Lead task prompts (`references/templates/`). Recovery steps: `references/runbook.md`. A run that "succeeded" only means the session ended, so judge by labels and replies.
+The repository's copy of this folder is the source of truth. A copy that lacks a script or reference named here (for example an account copy saved from SKILL.md only) is out of date: `scripts/selfcheck.py` lists what is missing. Clone the repo and use its copy, or install the packaged zip (`scripts/package.py`). Setup for any repository or account: `references/setup.md`. A new repository takes one command, `python3 scripts/init_repo.py --repo <o>/<r> --owner <login> --install-skill --install-events --create-labels --prompts`: it writes the settings file, the issue form, the `Loop fire` workflow and a starter `CLAUDE.md`, installs this skill, creates the labels and prints the Code and Lead task prompts (`references/templates/`). Connecting the events to the two tasks (API triggers and four repository secrets) is step 5 of `references/setup.md`. Recovery steps: `references/runbook.md`. A run that "succeeded" only means the session ended, so judge by labels and replies.

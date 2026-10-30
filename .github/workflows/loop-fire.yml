@@ -1,5 +1,9 @@
 name: Loop fire
 
+# Starts the Lead or Code scheduled task the moment the owner's GitHub activity gives it work.
+# The router (scripts/route_event.py) decides who runs and holds no secret; only scripts/fire.py
+# reads the four fire values. Details: .claude/skills/github-loop/references/events.md
+
 on:
   issues:
     types: [opened, labeled]
@@ -26,6 +30,8 @@ concurrency:
 
 jobs:
   fire:
+    # Personal repositories: the owner is the account. For an organization repository, replace
+    # github.repository_owner with the owner's login (and pass the same login to the router below).
     if: github.actor == github.repository_owner
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -39,7 +45,7 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           OWNER: ${{ github.repository_owner }}
-        run: python3 .github/loop-fire/route_event.py --event "$EVENT_NAME" --payload "$GITHUB_EVENT_PATH" --owner "$OWNER" --output "$GITHUB_OUTPUT"
+        run: python3 .claude/skills/github-loop/scripts/route_event.py --event "$EVENT_NAME" --payload "$GITHUB_EVENT_PATH" --owner "$OWNER" --output "$GITHUB_OUTPUT"
       - name: Fire the roles
         if: steps.route.outputs.roles != ''
         env:
@@ -51,4 +57,4 @@ jobs:
           LOOP_LEAD_FIRE_TOKEN: ${{ secrets.LOOP_LEAD_FIRE_TOKEN }}
           LOOP_CODE_FIRE_URL: ${{ secrets.LOOP_CODE_FIRE_URL }}
           LOOP_CODE_FIRE_TOKEN: ${{ secrets.LOOP_CODE_FIRE_TOKEN }}
-        run: python3 .github/loop-fire/fire.py --roles "$ROLES" --issue "$ISSUE" --event "$EVENT_NAME" $([ "$DRY_RUN" = "true" ] && echo --dry-run)
+        run: python3 .claude/skills/github-loop/scripts/fire.py --roles "$ROLES" --issue "$ISSUE" --event "$EVENT_NAME" $([ "$DRY_RUN" = "true" ] && echo --dry-run)

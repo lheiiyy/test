@@ -2,6 +2,7 @@
 """Decide which github-loop roles to fire for one GitHub event. No secrets, no network.
 
 Usage: route_event.py --event <name> --payload <file> --owner <login> [--output <file>]
+Used by the loop-fire workflow (references/events.md); the decision table lives in KEYWORD_ROLES and HEADER_ROLES.
 Prints the roles (one per line). With --output, also appends "roles=lead,code" for GitHub Actions.
 Comment text is only parsed here, never printed, so it cannot reach a shell or a payload.
 """
@@ -10,8 +11,7 @@ import json
 import os
 import sys
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(HERE, "..", "..", ".claude", "skills", "github-loop", "scripts"))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from loop_guard import KEYWORD, first_header, is_autopilot  # noqa: E402
 
 KEYWORD_ROLES = {"APPROVED": ["code"], "REVISE:": ["lead"], "CONTINUE:": ["lead", "code"]}
