@@ -109,4 +109,16 @@ Files in scope: .github/workflows/loop-fire.yml, .github/loop-fire/, docs/plan-l
 6. The first real `APPROVED` after the merge is the live test. If nothing starts, the hourly run still does the work.
 7. Do not turn on "required approvals" on `main`.
 
-AWAITING APPROVAL
+APPROVED by Leo on 2026-10-30 (relayed from chat, issue #16)
+
+## Status
+
+Built 2026-10-30, awaiting the Lead's review and Leo's merge tap.
+
+- **Tests:** `python3 -m unittest discover -s .github/loop-fire -p 'test_*.py'` gives 47 tests, OK (router decision table and negative cases, fire script with a fake opener, static workflow checks).
+- **Diff scan:** `trig_` appears only in the URL pattern of `fire.py` and dummy test values; no real credential value, `sk-` or `ghp_` in the diff.
+- **Not run here:** `actionlint` (not installed; reported as not run), the workflow itself, a live POST. Leo's smoke test covers them.
+- **Decisions:** `actions/checkout` is pinned to v4.2.2 (`11bd71901bbe5b1630ceea73d27597364c9af683`), written from knowledge, not resolved with `gh api` (that repo is outside this session's access). Lead please verify the SHA. The workflow file pushed to `.github/workflows/` without refusal.
+- **Repository secrets (set by hand):** `LOOP_LEAD_FIRE_URL`, `LOOP_LEAD_FIRE_TOKEN`, `LOOP_CODE_FIRE_URL`, `LOOP_CODE_FIRE_TOKEN`. Until set, the workflow only prints a warning.
+- **Leo's setup and smoke test:** steps 2 to 6 in section 6.
+- **Rollback:** delete `.github/workflows/loop-fire.yml` or disable the workflow in the Actions tab; the hourly schedules keep working.
