@@ -31,6 +31,12 @@ function createMockTransport(seed) {
 
   return {
     rowCount: (name) => sheet(name).length,
+    // Mock only: every row of every sheet, so a browser session can carry the state between pages.
+    snapshot() {
+      const out = {};
+      for (const name of Object.keys(sheets)) out[name] = sheets[name].map((r) => ({ ...r }));
+      return out;
+    },
     readPage: (name, offset, limit) =>
       sheet(name).slice(offset, offset + limit).map((r, i) => ({ rowIndex: offset + i, record: { ...r } })),
     findRow(name, column, value) {

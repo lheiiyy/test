@@ -10,7 +10,10 @@ Trip Monitoring is a trip register on Google Sheets and Apps Script: requestors 
 
 ## Design
 
-- Design tokens (fill in once, then keep): colors, fonts, spacing, corner radius. Every screen reuses them; do not invent new ones.
+- Design tokens (set in `trip-monitoring/src/web/app.css`; every screen reuses them, do not invent new ones):
+  - Colors: text `#1f2933`, background `#f7f8fa`, surface `#ffffff`, accent `#1f6feb`, danger `#b42318`, success `#157347`, border `#d0d5dd`.
+  - Fonts: system UI stack for body, system monospace for IDs and readings; scale 14/16/20/28 px.
+  - Spacing 4, 8, 16, 24 px; corner radius 6 px; touch targets at least 44 px.
 - Plain HTML and CSS for an Apps Script app; React only when the plan says so.
 
 ## Loop rules

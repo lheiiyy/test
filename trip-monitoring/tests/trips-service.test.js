@@ -150,3 +150,45 @@ test('audit rows use the injected clock', () => {
   draft(svc);
   assert.strictEqual(repos.audit_log.list()[0].at, '2026-01-01T00:00:00.000Z');
 });
+
+test('listTrips: requestor sees own, supervisor sees all, status filter works', () => {
+  const { svc } = setup();
+  const mine = draft(svc);
+  svc.createTrip('USR-0002', { vehicle_id: 'VEH-0001', team_id: 'TEM-0001', purpose: 'Other (fake)' });
+  assert.deepStrictEqual(svc.listTrips(REQ).map((t) => t.id), [mine.id]);
+  assert.strictEqual(svc.listTrips(SUP).length, 2);
+  assert.strictEqual(svc.listTrips(ADM, { status: 'Submitted' }).length, 0);
+  assert.throws(() => svc.listTrips('USR-9999'), /unknown user/);
+});
+
+test('getTrip returns travellers and readings, and hides other requestors trips', () => {
+  const { svc } = setup();
+  const t = draft(svc);
+  svc.addTraveller(REQ, t.id, 'USR-0002');
+  svc.recordReading(REQ, t.id, 'start', 10);
+  const full = svc.getTrip(REQ, t.id);
+  assert.strictEqual(full.travellers.length, 1);
+  assert.strictEqual(full.readings.length, 1);
+  assert.throws(() => svc.getTrip('USR-0002', t.id), /may not view/);
+  assert.strictEqual(svc.getTrip(SUP, t.id).id, t.id);
+});
+
+test('updateTrip edits a Draft only, for its owner only', () => {
+  const { svc, repos } = setup();
+  const t = draft(svc);
+  assert.strictEqual(svc.updateTrip(REQ, t.id, { purpose: 'New purpose (fake)' }).purpose, 'New purpose (fake)');
+  assert.throws(() => svc.updateTrip(REQ, t.id, { purpose: '' }), /purpose is required/);
+  assert.throws(() => svc.updateTrip(REQ, t.id, { vehicle_id: 'VEH-9' }), /not found/);
+  assert.throws(() => svc.updateTrip(SUP, t.id, { purpose: 'x' }), /not allowed/);
+  assert.throws(() => svc.updateTrip('USR-0002', t.id, { purpose: 'x' }), /only the requestor/);
+  svc.addTraveller(REQ, t.id, 'USR-0002');
+  svc.submit(REQ, t.id);
+  assert.throws(() => svc.updateTrip(REQ, t.id, { purpose: 'x' }), /only a Draft/);
+  assert.ok(repos.audit_log.list({ where: { action: 'update' } }).length === 1);
+});
+
+test('lookups returns vehicles, teams and users', () => {
+  const { svc } = setup();
+  const l = svc.lookups(REQ);
+  assert.ok(l.vehicles.length && l.teams.length && l.users.length);
+});

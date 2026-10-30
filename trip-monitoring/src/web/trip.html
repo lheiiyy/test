@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Trip · Trip Monitoring</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="bar">
+  <h1>Trip Monitoring</h1>
+  <div id="switcher"></div>
+</header>
+<main>
+  <p><a href="index.html" id="back">&larr; All trips</a></p>
+  <div id="messages"></div>
+  <div id="view" aria-live="polite"><p>Loading trip…</p></div>
+</main>
+<script src="seed.js"></script>
+<script src="app.js"></script>
+<script>
+  const { $, el, message, roleSwitcher } = window.TM;
+  const tripId = new URLSearchParams(location.search).get('id');
+
+  window.TM.start((api) => {
+    function option(rows, label) { return rows.map((r) => el('option', { value: r.id }, label(r))); }
+    function field(id, text, control) { return el('div', { class: 'field' }, el('label', { for: id }, text), control); }
+    function act(fn, okText, after) {
+      const res = fn();
+      if (!res.ok) { message(res.error, 'error'); return; }
+      api.save();
+      after ? after(res.data) : render(okText);
+    }
+
+    function render(okText) {
+      const view = $('#view');
+      const me = api.currentUser();
+      const lk = api.lookups().data;
+      let trip = null;
+      if (tripId) {
+        const res = api.getTrip(tripId);
+        if (!res.ok) { view.replaceChildren(); message(res.error, 'error'); return; }
+        trip = res.data;
+      }
+      message(okText || '', 'ok');
+      const mine = trip ? (trip.requestor_id === me.id || me.role === 'admin') : true;
+      const canCreate = ['requestor', 'driver', 'admin'].includes(me.role);
+      const editable = canCreate && (!trip || (trip.status === 'Draft' && mine));
+      const dis = editable ? {} : { disabled: '' };
+
+      if (!trip && !canCreate) {
+        view.replaceChildren(el('div', { class: 'card' }, `The ${me.role} role cannot create trips. Switch to a requestor or driver.`));
+        return;
+      }
+      const vehicle = el('select', Object.assign({ id: 'vehicle' }, dis), option(lk.vehicles, (v) => `${v.plate}: ${v.description}`));
+      const team = el('select', Object.assign({ id: 'team' }, dis), option(lk.teams, (t) => t.name));
+      const purpose = el('input', Object.assign({ id: 'purpose', type: 'text', required: '', maxlength: '120' }, dis));
+      const note = el('textarea', Object.assign({ id: 'note', rows: '2' }, dis));
+      if (trip) { vehicle.value = trip.vehicle_id; team.value = trip.team_id; purpose.value = trip.purpose; note.value = trip.note || ''; }
+
+      const form = el('form', { class: 'card', novalidate: '' },
+        el('h2', {}, trip ? [trip.id, ' ', el('span', { class: 'badge ' + trip.status }, trip.status)] : 'New trip'),
+        field('vehicle', 'Vehicle', vehicle), field('team', 'Team', team),
+        field('purpose', 'Purpose', purpose), field('note', 'Note (optional)', note),
+        editable ? el('button', { type: 'submit', id: 'save' }, trip ? 'Save changes' : 'Create trip') : '');
+      form.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const input = { vehicle_id: vehicle.value, team_id: team.value, purpose: purpose.value.trim(), note: note.value.trim() || null };
+        if (trip) act(() => api.updateTrip(trip.id, input), 'Trip saved.');
+        else act(() => api.createTrip(input), '', (t) => { location.href = 'trip.html?id=' + t.id + '#created'; });
+      });
+      const parts = [form];
+
+      if (trip) {
+        // Travellers
+        const who = el('select', { id: 'traveller' }, option(lk.users, (u) => `${u.name} (${u.role})`));
+        parts.push(el('section', { class: 'card', 'aria-labelledby': 'h-trav' },
+          el('h2', { id: 'h-trav' }, 'Travellers'),
+          trip.travellers.length
+            ? el('ul', { class: 'plain', id: 'travellers' }, trip.travellers.map((t) => el('li', {}, (lk.users.find((u) => u.id === t.user_id) || {}).name || t.user_id)))
+            : el('p', { class: 'small' }, 'No travellers yet. At least one is needed before validation.'),
+          editable ? el('div', { class: 'row' }, el('div', { class: 'field' }, el('label', { for: 'traveller' }, 'Add traveller'), who),
+            el('button', { type: 'button', id: 'add-traveller', onclick: () => act(() => api.addTraveller(trip.id, who.value), 'Traveller added.') }, 'Add')) : ''));
+        // Readings
+        const rd = (kind) => trip.readings.find((r) => r.kind === kind);
+        const readingBox = (kind) => {
+          const have = rd(kind);
+          if (have) return el('p', { id: kind + '-reading' }, `${kind[0].toUpperCase() + kind.slice(1)} reading: `, el('span', { class: 'mono' }, String(have.reading)));
+          if (!editable) return el('p', { class: 'small' }, `No ${kind} reading.`);
+          const input = el('input', { id: kind + '-input', type: 'number', min: '0', step: 'any', inputmode: 'decimal' });
+          return el('div', { class: 'row' }, el('div', { class: 'field' }, el('label', { for: kind + '-input' }, `${kind[0].toUpperCase() + kind.slice(1)} reading`), input),
+            el('button', { type: 'button', id: 'save-' + kind, onclick: () => act(() => api.recordReading(trip.id, kind, input.value === '' ? NaN : Number(input.value)), `${kind} reading saved.`) }, 'Save'));
+        };
+        parts.push(el('section', { class: 'card', 'aria-labelledby': 'h-read' }, el('h2', { id: 'h-read' }, 'Vehicle readings'), readingBox('start'), readingBox('end')));
+
+        // Workflow actions (the services still check every call)
+        const buttons = [];
+        if (trip.status === 'Draft' && mine && canCreate) {
+          buttons.push(el('button', { type: 'button', id: 'submit-trip', onclick: () => act(() => api.submit(trip.id), 'Trip submitted.') }, 'Submit trip'));
+          buttons.push(el('button', { type: 'button', id: 'delete-trip', class: 'danger', onclick: () => { if (confirm('Delete this Draft trip?')) act(() => api.deleteTrip(trip.id), '', () => { location.href = 'index.html'; }); } }, 'Delete draft'));
+        }
+        if (trip.status === 'Submitted' && me.role === 'supervisor') buttons.push(el('button', { type: 'button', id: 'validate-trip', onclick: () => act(() => api.validate(trip.id), 'Trip validated.') }, 'Validate trip'));
+        if (trip.status === 'Trip validated' && me.role === 'accounting') buttons.push(el('button', { type: 'button', id: 'complete-trip', onclick: () => act(() => api.complete(trip.id), 'Trip completed.') }, 'Complete trip'));
+        const ret = el('input', { id: 'reason', type: 'text', maxlength: '200' });
+        if (['Submitted', 'Trip validated'].includes(trip.status) && me.role === 'supervisor') {
+          parts.push(el('section', { class: 'card', 'aria-labelledby': 'h-ret' }, el('h2', { id: 'h-ret' }, 'Return to Draft'),
+            field('reason', 'Reason (required)', ret),
+            el('button', { type: 'button', id: 'return-trip', class: 'secondary', onclick: () => act(() => api.returnToDraft(trip.id, ret.value.trim()), 'Trip returned to Draft.') }, 'Return to Draft')));
+        }
+        if (trip.note && trip.status === 'Draft') parts.push(el('p', { class: 'small' }, 'Latest note: ' + trip.note));
+        if (buttons.length) parts.push(el('div', { class: 'row card', id: 'actions' }, buttons));
+        else if (!editable) parts.push(el('p', { class: 'small' }, 'No actions for your role on this trip.'));
+      }
+      view.replaceChildren(...parts);
+    }
+
+    $('#switcher').append(roleSwitcher(api, () => render()));
+    render(location.hash === '#created' ? 'Trip created.' : '');
+  });
+</script>
+</body>
+</html>

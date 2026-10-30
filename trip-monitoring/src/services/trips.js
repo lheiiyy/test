@@ -15,6 +15,7 @@ const WHO = {
   complete: ['accounting'],
   returnToDraft: ['supervisor'],
 };
+const SEES_ALL = ['supervisor', 'accounting', 'admin'];
 
 function createTripService(repos) {
   function load(id) {
@@ -45,7 +46,54 @@ function createTripService(repos) {
     return repos.vehicle_readings.list({ where: { trip_id: tripId } });
   }
 
+  function canSee(user, trip) {
+    return SEES_ALL.includes(user.role) || trip.requestor_id === user.id;
+  }
+  function knownUser(actorId) {
+    const user = repos.users.get(actorId);
+    if (!user) throw new Error(`unknown user ${actorId}`);
+    return user;
+  }
+
   return {
+    // Requestors and drivers see their own trips; supervisor, accounting and admin see all.
+    listTrips(actorId, filter) {
+      const user = knownUser(actorId);
+      const where = filter && filter.status ? { status: filter.status } : {};
+      return repos.trips.list({ where, limit: 1000 }).filter((t) => canSee(user, t));
+    },
+    getTrip(actorId, id) {
+      const user = knownUser(actorId);
+      const trip = load(id);
+      if (!canSee(user, trip)) throw new Error('you may not view this trip');
+      return Object.assign({}, trip, {
+        travellers: repos.trip_travellers.list({ where: { trip_id: id } }),
+        readings: readings(id),
+      });
+    },
+    // Dummy-safe lookups for the form drop-downs.
+    lookups(actorId) {
+      knownUser(actorId);
+      return { vehicles: repos.vehicles.list(), teams: repos.teams.list(), users: repos.users.list() };
+    },
+    updateTrip(actorId, id, input) {
+      const user = requireRole(repos, actorId, WHO.create, 'edit a trip');
+      const trip = load(id);
+      ownTrip(user, trip, 'edit');
+      if (trip.status !== 'Draft') throw new Error('only a Draft trip can be edited');
+      const changes = {};
+      for (const f of ['vehicle_id', 'team_id', 'purpose', 'note']) {
+        if (f in input) changes[f] = input[f];
+      }
+      for (const f of ['vehicle_id', 'team_id', 'purpose']) {
+        if (f in changes && !changes[f]) throw new Error(`${f === 'vehicle_id' ? 'vehicle' : f} is required`);
+      }
+      if (changes.vehicle_id && !repos.vehicles.get(changes.vehicle_id)) throw new Error(`vehicle ${changes.vehicle_id} not found`);
+      if (changes.team_id && !repos.teams.get(changes.team_id)) throw new Error(`team ${changes.team_id} not found`);
+      const updated = repos.trips.update(actorId, id, changes);
+      audit(repos, actorId, 'update', 'trips', id, Object.keys(changes).join(','));
+      return updated;
+    },
     createTrip(actorId, input) {
       const user = requireRole(repos, actorId, WHO.create, 'create a trip');
       for (const f of ['vehicle_id', 'team_id', 'purpose']) {
