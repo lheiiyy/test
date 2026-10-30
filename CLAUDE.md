@@ -1,6 +1,6 @@
 # Trip Monitoring: rules for Claude Code
 
-One short paragraph: what this project is and who uses it. Link the spec or plan here once there is one.
+Trip Monitoring is a trip register on Google Sheets and Apps Script: requestors or drivers create and submit trips, supervisors validate them, Accounting completes them, Admin manages users and lookups. Plan: `trip-monitoring/docs/plan-m1-trips.md`; status: `trip-monitoring/docs/STATUS.md`.
 
 ## Stack and layout
 
@@ -19,7 +19,7 @@ Follow `.claude/skills/github-loop/SKILL.md`. The repository owner is `lheiiyy`.
 
 ## Tests
 
-- Name the project's test command here, and run it before every hand-off.
+- Test command: `node --test 'tests/*.test.js'` in `trip-monitoring/` (or `npm test` there). Run it before every hand-off.
 - A screen change is checked at 1280, 768 and 375 pixels, with screenshots saved as the frontend note says.
 - An Apps Script app is tested on its mock transport (`tests/fixtures/`); its deploy is a manual step for the owner.
 - The repository may be public: never commit secrets, tokens, real personal data or internal IDs.
