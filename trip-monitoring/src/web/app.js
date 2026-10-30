@@ -1,25 +1,32 @@
 // Shared helpers for the screens: a tiny CommonJS loader so the same src/ files run in the
 // browser and in node, the mock api, the role switcher and small DOM helpers.
 (function () {
-  const FILES = ['schema', 'repository/transport', 'repository/base', 'repository/index',
+  const FILES = ['schema', 'repository/transport', 'repository/base', 'repository',
     'services/access', 'services/audit', 'services/trips', 'api'];
   const registry = {};
   const base = (document.currentScript.src.replace(/\/web\/app\.js.*$/, '/'));
 
-  window.require = function (p) {
-    const key = p.replace(/^(\.\.?\/)+/, '').replace(/\.js$/, '');
-    const hit = registry[key] || registry[key + '/index'];
+  function req(p) {
+    // Module names are unique, so the last path segment is the key (repository/index is 'repository').
+    const hit = registry[p.split('/').pop().replace(/\.js$/, '')];
     if (!hit) throw new Error('module not loaded: ' + p);
     return hit;
-  };
+  }
+  window.require = req;
+  // Each module runs in its own hidden iframe, so top-level const names (TABLES, ...) cannot clash.
   function load(i, done) {
     if (i === FILES.length) return done();
-    window.module = { exports: {} };
-    const s = document.createElement('script');
-    s.src = base + FILES[i] + '.js';
-    s.onload = () => { registry[FILES[i]] = window.module.exports; load(i + 1, done); };
+    const frame = document.createElement('iframe');
+    frame.hidden = true;
+    document.body.appendChild(frame);
+    const w = frame.contentWindow;
+    w.module = { exports: {} };
+    w.require = req;
+    const s = w.document.createElement('script');
+    s.src = base + FILES[i] + (FILES[i] === 'repository' ? '/index' : '') + '.js';
+    s.onload = () => { registry[FILES[i].split('/').pop()] = w.module.exports; load(i + 1, done); };
     s.onerror = () => { window.TM.fatal('Could not load ' + FILES[i] + '.js'); };
-    document.head.appendChild(s);
+    w.document.head.appendChild(s);
   }
 
   const $ = (sel, root) => (root || document).querySelector(sel);

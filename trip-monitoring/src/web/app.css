@@ -7,6 +7,7 @@
   --s1: 4px; --s2: 8px; --s3: 16px; --s4: 24px; --radius: 6px;
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.5 var(--font); }
 header.bar { background: var(--surface); border-bottom: 1px solid var(--border); padding: var(--s2) var(--s3);
   display: flex; flex-wrap: wrap; gap: var(--s3); align-items: center; justify-content: space-between; }
