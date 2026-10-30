@@ -72,3 +72,10 @@ test('web seed matches the dummy fixture', () => {
   new Function('window', src)(win);
   assert.deepStrictEqual(win.TM_SEED, seed);
 });
+
+test('exportState carries the mock state into a new api through its seed', () => {
+  const a = as(mk(), 'USR-0001');
+  const t = a.createTrip(input).data;
+  const b = createApi('mock', { seed: a.exportState(), userId: 'USR-0003', now: NOW });
+  assert.strictEqual(b.getTrip(t.id).data.purpose, input.purpose);
+});

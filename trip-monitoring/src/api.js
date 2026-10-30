@@ -14,7 +14,8 @@ function createApi(transportName, opts) {
   if (transportName !== 'mock') throw new Error(`transport ${transportName} is not available yet`);
   const o = opts || {};
   if (!o.seed) throw new Error('the mock transport needs a seed');
-  const repos = createRepositories(createMockTransport(o.seed), { now: o.now });
+  const transport = createMockTransport(o.seed);
+  const repos = createRepositories(transport, { now: o.now });
   const svc = createTripService(repos);
   let userId = o.userId || null;
 
@@ -27,6 +28,8 @@ function createApi(transportName, opts) {
       userId = id;
       return { ok: true, data: repos.users.get(id) };
     },
+    // Mock only: the whole state, usable as a seed for the next page.
+    exportState: () => transport.snapshot(),
     currentUser: () => (userId ? repos.users.get(userId) : null),
   };
   for (const name of ACTIONS) {
