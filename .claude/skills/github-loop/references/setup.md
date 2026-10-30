@@ -1,84 +1,64 @@
 # One-time setup (any repository, any account)
 
-Do these in order, and confirm each step before the next. Everything works from a tablet browser except where noted. `<o>/<r>` is the repository and `<owner>` the Product Owner's GitHub login.
+Do the steps in order and confirm each "You should see" line before the next. Everything works from a tablet browser. `<o>/<r>` is the repository and `<owner>` the Product Owner's GitHub login. Plan about 30 minutes.
 
-## Quick start: a new repository in one command
+## 1. Install the skill for chat sessions
 
-From a checkout of the target repository (or with `--dir <checkout>`), using a full copy of this skill:
+Scheduled runs read the skill from the repository (step 2), so this step is only for chat and Cowork sessions. Repeat it after every skill change.
+
+1. In a session that has the repository, ask: "Build the github-loop zip and send it to me." It runs `python3 scripts/package.py --out github-loop.zip` and sends the file.
+2. Upload that zip as a skill in claude.ai, replacing the old one. Never upload SKILL.md alone: the scripts and references must come with it.
+
+**You should see:** a new chat that uses `/github-loop` runs `python3 scripts/selfcheck.py` and gets `"ok": true`. If it lists `missing` files, or the script is not there, the upload is an old copy: upload the zip again.
+
+## 2. Set up the repository: one command
+
+In a session that has the repository attached (a chat, Cowork or Claude Code on the web), ask: "Set up the github-loop in `<o>/<r>`." It runs, from a full copy of this skill:
 
 ```
 python3 scripts/init_repo.py --repo <o>/<r> --owner <owner> --owner-name <name> --language <language> --install-skill --create-labels --prompts
 ```
 
-It writes `.github/github-loop.json`, the Autopilot issue form (Repo field filled in; add `--stack "<text>"` for the Stack default) and a starter `CLAUDE.md`, copies this skill to `.claude/skills/github-loop/`, creates the labels, and prints the Code, Lead and Lead Deep task prompts. A file that already exists is kept (`--force` replaces it), and `--dry-run` shows the plan. Then:
+It writes `.github/github-loop.json` (the settings), the Autopilot issue form and a starter `CLAUDE.md`, copies this skill to `.claude/skills/github-loop/`, creates the labels and prints the Code, Lead and Lead Deep task prompts. A file that already exists is kept (`--force` replaces it), and `--dry-run` shows the plan. Put the new files in a pull request; the skill folder and `.github/` are high risk, so you tap Merge.
 
-1. Put the new files in a pull request. The skill folder and `.github/` are high risk, so the owner merges it.
-2. Create the two hourly tasks from the printed prompts (step 2 below).
-3. Fill in the starter `CLAUDE.md`: what the project is, the test command, the folders the loop may touch.
-4. File one small request with the issue form, and answer it with **Comment**.
+- **Settings** (`.github/github-loop.json`, all optional): `owner`, `owner_name`, `language`, `base`, `branch_prefix`, `owner_associations`, `improve` (`scripts/config.py`). An organization repo must set `owner`.
+- **Labels** (`readiness.py --create-labels` makes them): `to-code` 0E8A16, `code-working` FBCA04, `awaiting-approval` 5319E7, `to-review` 1D76DB, `reviewed` 0052CC, `needs-leo` D93F0B (this name stays in every repo), `done` 6E7781.
 
-The steps below are the same work by hand, and the reference for each part.
+**You should see:** a merged PR with those files and the seven labels under Issues, Labels.
 
-## 1. Repository
+## 3. Protect `main` the loop-compatible way
 
-1. **Put the skill in the repo** as `.claude/skills/github-loop/` through a PR. Scheduled runs and any Claude Code session in the repo read it from the default branch. To install it elsewhere, run `python3 scripts/package.py --out github-loop.zip` and unzip it into the other repo, or upload the zip as a skill in claude.ai for chat sessions on any account. An account copy without `scripts/` is not enough: the steps call the scripts.
-2. **Settings (optional):** add `.github/github-loop.json`, for example `{"owner": "<owner>", "owner_name": "<name>", "language": "<language>"}`. Without it the scripts use the repo's owner (a personal repo) and English. An organization repo must set `owner`, and may add `"owner_associations": ["OWNER", "MEMBER"]`. Other keys: `base`, `branch_prefix`, `improve` (`scripts/config.py`).
-3. **Create the labels.** Run `python scripts/readiness.py --repo <o>/<r> --create-labels`, or create them by hand:
+Settings, Branches: require pull requests and status checks, but do **not** require approvals. Every agent posts as the owner, and GitHub never lets a PR author approve their own PR, so a required-approval rule stops every merge. High-risk and out-of-scope PRs already wait for your Merge tap.
 
-   | Label | Color |
-   |---|---|
-   | `to-code` | `0E8A16` |
-   | `code-working` | `FBCA04` |
-   | `awaiting-approval` | `5319E7` |
-   | `to-review` | `1D76DB` |
-   | `reviewed` | `0052CC` |
-   | `needs-leo` | `D93F0B` (the name stays the same in every repo) |
-   | `done` | `6E7781` |
-   | `to-chat` | classic mode only |
-4. **Add the issue form** `.github/ISSUE_TEMPLATE/autopilot.yml`: `init_repo.py` writes it, or copy `references/templates/autopilot-issue-form.yml` and replace `{{repo}}` and `{{stack}}`. It files the request with `to-code` already applied.
-5. **Keep one short `CLAUDE.md` per project:** the stack rules and the folders the loop may touch.
-6. **Protect `main` the loop-compatible way:** require pull requests and status checks, but do **not** require approvals. Every agent posts as the owner, and GitHub never lets a PR author approve their own PR, so a required-approval rule stops every merge. High-risk and out-of-scope PRs already wait for the owner's Merge tap (merge exits 8 and 9).
+## 4. Create the two scheduled tasks
 
-## 2. Two scheduled tasks: Code and Lead
+Both are hourly cloud tasks. Settings for each: permission mode "auto", only the Claude Code Remote connector (remove Gmail, Drive and Sheets unless a project needs them), **Sonnet**, and push notifications on, so a failed or silent run reaches your phone. A task set to Opus pays Opus for every step; `scripts/route.py` says when a step needs it (`references/models.md`).
 
-Both are hourly cloud tasks. Recommended settings: permission mode "auto", only the Claude Code Remote connector (least privilege; remove Gmail, Drive and Sheets unless a project needs them), and **Sonnet** for both. `scripts/route.py` says when a step needs Opus (`references/models.md`); a task set to Opus pays Opus for every step. A scheduled run showed no subagent use, so the dependable way to get Opus for sensitive plans and reviews is the optional **Lead Deep** task below. The owner can force a model per request with the Model field of the issue form. A task's own model is changed from chat by asking Claude, or in claude.ai. Turn on **push notifications** for both tasks, so a failed or silent run reaches the phone.
+- **Code** (for example at minute 03): paste the `code` prompt from step 2.
+- **Lead** (for example at minute 33, so a review follows a build by about 30 minutes): paste the `lead` prompt.
+- Both end with exactly "No new work." when idle, pass `--session <model>` to every posting command, and use REST only. The text lives in `references/templates/code-task.md` and `references/templates/lead-task.md`; change a rule there, not in a copy.
+- **Lead Deep (optional, only for sensitive work):** an Opus task every two hours (for example `18 */2 * * *`) with the `lead_deep` prompt. Only after it exists, add `--max-tier sonnet` to the normal Lead's triage command: opus-tier plans and reviews then wait up to 120 minutes for Lead Deep, and the normal Lead takes them after that and says `wanted opus; ran inline`. A scheduled run showed no subagent use, so this is the dependable way to get Opus.
+- **Watchdog:** each task parks the other's work that nobody picked up for 180 minutes, so a silent run shows up as a `needs-leo` issue. Your `CONTINUE:` resumes it.
 
-**Prompts.** `init_repo.py --prompts` prints them filled in; the text lives in `references/templates/code-task.md` and `references/templates/lead-task.md` (one source: change a rule there, not in a copy). Paste each as the task prompt.
-- **Code task** (for example at minute 03): triage with `--role code`, then the build, fix, merge and report steps in `references/autopilot.md`.
-- **Lead task** (for example at minute 33, so a review follows a build by about 30 minutes): triage with `--role lead`, then `references/lead.md`.
-- Both end with exactly "No new work." when idle, pass `--session <model>` to every posting command, use REST only, and act only on the owner's issues and comments.
+**You should see:** both tasks in the task list, each with a first run that ends "No new work."
 
-**Lead Deep task (optional, only for sensitive work):** an Opus task every two hours (for example `18 */2 * * *`) with the printed `lead_deep` prompt: the Lead prompt with the triage command ending `--role lead --min-tier opus`, the name "Lead Deep, the Opus Technical Lead" and the model opus. An idle run costs almost nothing. Only after this task exists, add `--max-tier sonnet` to the normal Lead's triage command: opus-tier plans and reviews then wait up to 120 minutes (`--defer-minutes`) for Lead Deep, and the normal Lead takes them anyway after that, saying `wanted opus; ran inline` in its Model line. Without Lead Deep, leave `--max-tier` off.
+## 5. Fill in the project's `CLAUDE.md`
 
-**Watchdog:** each task parks the other's work that nobody picked up for 180 minutes (`--stall-minutes`), so a silent run shows up as a `needs-leo` issue. The owner's `CONTINUE:` resumes it.
+Keep it short: what the project is, the test command, the design tokens (colors, fonts, spacing) and the folders the loop may touch. Scheduled runs read it every time. For a web app, also read `references/web-apps.md`.
 
-Facts to keep in mind:
-- **GitHub access is per repository.** Test any new repo with one run before relying on it.
-- **Starting another task early may be refused from chat**, so hand-offs wait for the next hourly run.
-- **Tap Comment, not "Close with comment"** when answering an issue. Closing hides it from the loop; triage reopens it within 48 hours, but that costs an extra hour.
-- **Scheduled Code runs have Playwright and Chromium** preinstalled. On Node 22, `node --test` needs a glob, not a folder.
-- **Run logs are not visible from chat.** A run that "succeeded" may have done nothing, so judge by labels and replies. The watchdog above is the safety net.
+## 6. Run one small request
 
-## 3. CI (recommended)
+1. Issues, New issue, **Autopilot request**. Pick a small change, for example a README. The form applies `to-code`.
+2. Within about an hour the Lead posts a plan. Read it, then reply `APPROVED` (capitals), or `REVISE: <notes>`. Tap **Comment**, not "Close with comment": closing hides the issue, and triage reopens it only after up to 48 hours.
+3. Code builds (within about an hour), the Lead reviews (about 30 minutes later), and Code merges unless the change is high risk.
 
-Add `.github/workflows/tests.yml` so a check gates every merge. Then require the `test` check on `main`, and write `CI required: yes` in each plan's merge plan; the merge gate then refuses a head with no checks. Whether the session token may push workflow files is UNVERIFIED, and a workflow change is high risk (the owner merges it). If the push is refused, the owner uploads the file with GitHub's Add file button.
+**You should see:** the issue labeled `done` and closed, with a five-line summary and a merged PR. If it stalls, see `references/runbook.md`.
 
-```yaml
-name: tests
-on:
-  pull_request:
-  push:
-    branches: [main]
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: python3 -B .claude/skills/github-loop/evals/test_scripts.py
-      # add the project's own test command here
-```
+## 7. Add CI (recommended)
 
-## 4. Release policy
+Copy `references/templates/tests.yml` to `.github/workflows/tests.yml` through a PR, add the project's own test command, then require the `test` check on `main`. Write `CI required: yes` in each plan's merge plan; the merge gate then refuses a head with no checks. A workflow change is high risk, so you tap Merge. Whether the session token may push workflow files is UNVERIFIED: if the push is refused, upload the file with GitHub's Add file button.
+
+## 8. Release policy
 
 Each plan states one of these:
 
@@ -86,36 +66,37 @@ Each plan states one of these:
 |---|---|
 | `no deploy` | Nothing |
 | `staging automatic` | Code deploys through the authorized workflow and verifies the deployment |
-| `production after the owner's CONTINUE: release` | Code parks; the owner's reply releases |
+| `production after the owner's CONTINUE: release` | Code parks; your reply releases |
 
-- **GitHub Pages:** the owner enables it once in Settings → Pages. The session proxy blocks the Pages API.
-- **Apps Script:** deploys stay manual. clasp is not available in cloud runs, and credentials are never committed.
+- **GitHub Pages:** enable it once in Settings, Pages. The session proxy blocks the Pages API.
+- **Apps Script:** deploys stay manual. clasp is not available in cloud runs, and credentials are never committed (`references/experts/appsscript.md`).
 
-## 5. Readiness before the first request
+## Readiness before a request
 
 Run `python scripts/readiness.py --repo <o>/<r> --markdown` and fix the NEEDS SETUP rows. The Lead repeats it in every plan.
 
-## The owner's one-time checklist
+## Facts to keep in mind
 
-- [ ] Approve the skill PR (it is high risk, so you tap Merge).
-- [ ] Do not turn on "required approvals" for `main`. If protection exists, require status checks only.
-- [ ] Put both loop tasks on Sonnet, with `--session` in their prompts.
-- [ ] Try the Autopilot issue form once (browser and phone).
-- [ ] Answer issues with the **Comment** button, not "Close with comment".
-- [ ] Turn on push notifications for the loop tasks in claude.ai.
-- [ ] When a plan deploys: enable GitHub Pages, or keep Apps Script deploys manual.
-
-## Other routes (kept for reference)
-
-- **GitHub App with an event trigger,** instead of hourly polling. It is created in the claude.ai UI after installing github.com/apps/claude, with the trigger "Issues → labeled".
-- **GitHub Action fallback** with `anthropics/claude-code-action@v1` and a `CLAUDE_CODE_OAUTH_TOKEN` secret, made with `claude setup-token` in a terminal or Codespace. Run it on `issues: labeled`, only when `github.event.sender.login == github.repository_owner`. This is untested on a tablet.
+- **GitHub access is per repository.** Test a new repository with one run before relying on it.
+- **Starting another task early may be refused from chat**, so hand-offs wait for the next hourly run.
+- **Scheduled Code runs have Playwright and Chromium** preinstalled. On Node 22, `node --test` needs a glob, not a folder.
+- **Run logs are not visible from chat.** A run that "succeeded" may have done nothing, so judge by labels and replies.
 - **Return path in chat:** say "check the loop".
+
+## Your one-time checklist
+
+- [ ] Merge the setup PR (step 2).
+- [ ] Do not turn on "required approvals" for `main` (step 3).
+- [ ] Put both loop tasks on Sonnet, with `--session` in their prompts, and push notifications on (step 4).
+- [ ] Try the Autopilot form once, in the browser and on the phone (step 6).
+- [ ] Answer issues with **Comment**, not "Close with comment".
+- [ ] When a plan deploys: enable GitHub Pages, or keep Apps Script deploys manual.
 
 ## Known limits
 
-- **Chat cannot be woken by GitHub.** When the owner is away, the Lead runs as a scheduled task.
+- **Chat cannot be woken by GitHub.** When you are away, the Lead runs as a scheduled task.
 - **Hourly cadence:** a plan within about 1 hour of the request, a build within 1 hour of approval, a review about 30 minutes later, and the merge about 30 minutes after that.
 - **Shared budget:** all scheduled tasks and chat share the account's budget.
-- **Escalation by subagent is unproven:** a live scheduled Lead run did not use one. Treat `delegate` as "no subagent" unless a run proves otherwise, and use Lead Deep. The Model line then says what really ran.
+- **Escalation by subagent is unproven.** Treat `delegate` as "no subagent" unless a run proves otherwise; the Model line says what really ran.
 - **Claims are best effort:** GitHub has no atomic label claim, so two runs in the same second could both claim one issue. Staggered schedules and one issue per run keep this rare.
 - **Research preview:** scheduled tasks may change.
