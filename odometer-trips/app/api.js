@@ -33,7 +33,7 @@ export async function createApi({ transport = 'local', storage, fixtures, loadFi
   if (!store) throw new Error('Browser storage is not available.');
 
   const key = transport === 'mock' ? MOCK_STORAGE_KEY : STORAGE_KEY;
-  const services = createServices(createRepository({ storage: store, key, user, now }));
+  const services = createServices(createRepository({ storage: store, key, user, now }), { now });
 
   if (transport === 'mock' && services.listVehicles({ includeInactive: true }).length === 0) {
     const data = fixtures ?? (loadFixtures ? await loadFixtures() : {});
@@ -62,5 +62,7 @@ export async function createApi({ transport = 'local', storage, fixtures, loadFi
     listTrips: call(() => services.listTrips()),
     addTrip: call((input) => services.addTrip(input)),
     voidTrip: call((id) => services.voidTrip(id)),
+    listExportTables: call(() => services.listExportTables()),
+    exportCsv: call((table) => services.exportCsv(table)),
   };
 }

@@ -1,7 +1,18 @@
-// Services: business rules for vehicles (M1) and trips (M2). No storage access here.
+// Services: business rules for vehicles (M1) and trips (M2) and CSV export. No storage access here.
+
+import { buildCsv } from './csv.js';
 
 export const FUEL_TYPES = ['Gasoline', 'Diesel', 'Electric', 'Hybrid', 'Other'];
 const PURPOSE_GROUP = 'trip_purpose';
+
+const AUDIT_COLUMNS = ['created_at', 'created_by', 'updated_at', 'updated_by', 'is_active', 'row_version'];
+// Stored columns only, in a fixed order. Derived values such as distance are never stored, so never exported.
+export const EXPORT_COLUMNS = {
+  vehicles: ['id', 'name', 'plate', 'fuel_type', 'start_odometer_km', ...AUDIT_COLUMNS],
+  trips: ['id', 'vehicle_id', 'trip_date', 'start_km', 'end_km', 'purpose_id', 'destination', 'status', ...AUDIT_COLUMNS],
+  lookups: ['id', 'group_name', 'value', ...AUDIT_COLUMNS],
+  audit_log: ['id', 'table_name', 'record_id', 'action', 'changed_at', ...AUDIT_COLUMNS],
+};
 
 export class ValidationError extends Error {
   constructor(field, message) {
@@ -43,7 +54,7 @@ export function distanceKm(trip) {
   return trip.end_km - trip.start_km;
 }
 
-export function createServices(repo) {
+export function createServices(repo, { now = () => new Date() } = {}) {
   function activeVehicle(id) {
     const v = id ? repo.get('vehicles', id) : null;
     if (!v || !v.is_active) throw new ValidationError('vehicle_id', 'Choose an active vehicle.');
@@ -66,7 +77,23 @@ export function createServices(repo) {
       .map((r) => ({ id: r.id, value: r.value }));
   }
 
+  function exportRows(table) {
+    if (!Object.hasOwn(EXPORT_COLUMNS, table)) throw new ValidationError('table', `Unknown table: ${table}.`);
+    return repo.list(table, { includeInactive: true });
+  }
+
   return {
+    // Export is read-only: no audit row, no row_version change.
+    listExportTables() {
+      return Object.keys(EXPORT_COLUMNS).map((table) => ({ table, rows: exportRows(table).length }));
+    },
+
+    exportCsv(table) {
+      const rows = exportRows(table);
+      const date = now().toISOString().slice(0, 10);
+      return { table, filename: `odometer-${table}-${date}.csv`, rows: rows.length, csv: buildCsv(EXPORT_COLUMNS[table], rows) };
+    },
+
     listVehicles({ includeInactive = false } = {}) {
       return repo.list('vehicles', { includeInactive });
     },
