@@ -26,6 +26,13 @@ Who may say what:
   A `CONTINUE:` keeps the approval.
 - Review verdicts are `from=lead type=verdict` comments naming the PR, the exact head
   SHA and `verdict=approved|changes`.
+- A sonnet verdict that approves with `Confidence: low` is not final: the Lead gets one
+  `review-recheck` (opus, limited to the verdict's `Unchecked:` items) for that head, posted as a
+  verdict with `recheck=yes`. The merge waits for it. A head gets at most one recheck.
+- A `type=hold` note (the Opus cap) is not a reply: it keeps the workflow labels, adds
+  needs-leo, and the step runs again by itself once a slot frees up.
+- A `type=defect pr=N` note ("galing sa #N") links a bug request to the merged loop PR that
+  caused it; the loop writes it and labels the issue `bug`. It is not a reply either.
 """
 import argparse
 import json
@@ -44,8 +51,12 @@ RELAY = re.compile(r"(?m)^APPROVED by [^\n]{1,60}? in chat on \d{4}-\d{2}-\d{2}:
 CI_LINE = re.compile(r"(?im)^[ \t>*-]*CI required[ \t]*:[ \t]*\**[ \t]*(yes|no)\b")
 AGENTS = {"code", "lead"}
 OWNER_ASSOCIATIONS = {"OWNER"}  # config owner_associations can add "MEMBER" for an organization repo
-ROLE = {"plan": "lead", "revise": "lead", "review": "lead",
+ROLE = {"plan": "lead", "revise": "lead", "review": "lead", "review-recheck": "lead",
         "build": "code", "fix": "code", "merge": "code"}
+NOT_REPLIES = {"approval", "hold", "defect"}  # keywords, Opus-cap holds and defect links are not replies
+MODEL_RAN = re.compile(r"(?im)^Model:[ \t]*(haiku|sonnet|opus|fable)\b")
+CONFIDENCE = re.compile(r"(?im)^[ \t>*-]*\**Confidence\**[ \t]*:[ \t]*\**[ \t]*(high|low)\b")
+UNCHECKED = re.compile(r"(?im)^[ \t>*-]*\**Unchecked\**[ \t]*:[ \t]*\**[ \t]*(\S.*)$")
 
 
 def login(value):
@@ -113,13 +124,13 @@ def count_turns(msgs, owner):
 
 def agent_replies(msgs, owner):
     """(index, header) for owner-account comments whose first line is a from=code|lead header.
-    Relayed approvals are keywords, not replies, so they are left out."""
+    Relayed approvals are keywords and holds wait for the Opus cap, so neither counts as a reply."""
     found = []
     for i, m in enumerate(msgs):
         if m["is_body"] or not is_owner(m, owner):
             continue
         h = first_header(m["body"])
-        if h and h.get("from") in AGENTS and h.get("type") != "approval":
+        if h and h.get("from") in AGENTS and h.get("type") not in NOT_REPLIES:
             found.append((i, h))
     return found
 
@@ -200,16 +211,67 @@ def review_history(msgs, owner):
     return results, verdicts
 
 
+def ran_model(body):
+    m = MODEL_RAN.search(body or "")
+    return m.group(1).lower() if m else None
+
+
+def low_confidence(body):
+    """A sonnet review that says `Confidence: low`."""
+    m = CONFIDENCE.search(body or "")
+    return ran_model(body) == "sonnet" and bool(m) and m.group(1).lower() == "low"
+
+
+def unchecked_of(body):
+    m = UNCHECKED.search(body or "")
+    return m.group(1).strip() if m else ""
+
+
+def is_recheck(header):
+    return str(header.get("recheck", "")).lower() in ("yes", "1", "true")
+
+
+def recheck_needed(msgs, verdicts):
+    """The latest verdict when it is a low-confidence sonnet approval whose head has no recheck yet, else None."""
+    if not verdicts:
+        return None
+    i, v = verdicts[-1]
+    if is_recheck(v) or v.get("verdict") != "approved" or not low_confidence(msgs[i]["body"]):
+        return None
+    if any(is_recheck(h) and h.get("head") == v.get("head") for _, h in verdicts):
+        return None
+    return i, v
+
+
+def on_hold(issue, owner):
+    """True when the newest loop note is a hold (the Opus cap) and needs-leo is still on the issue."""
+    if "needs-leo" not in label_names(issue.get("labels")):
+        return False
+    msgs = thread(issue)
+    last = None
+    for m in msgs:
+        if m["is_body"] or not is_owner(m, owner):
+            continue
+        h = first_header(m["body"])
+        if h and h.get("from") in AGENTS:
+            last = h
+    return bool(last and last.get("type") == "hold")
+
+
 def review_status(issue, owner, head_sha, pr=None):
     """Is there an approved Lead verdict for exactly this head (and this PR)? Used by loop_gh.py merge.
     With `pr`, the verdict and the latest Code result must both name that PR, so a verdict for one PR
     can never merge another."""
-    results, verdicts = review_history(thread(issue), owner)
+    msgs = thread(issue)
+    results, verdicts = review_history(msgs, owner)
     if not verdicts:
         return {"approved": False, "reason": "no Lead review verdict after the latest plan"}
     v = verdicts[-1][1]
     if v.get("verdict") != "approved":
         return {"approved": False, "reason": "the latest Lead verdict requests changes"}
+    if recheck_needed(msgs, verdicts):
+        return {"approved": False, "reason": "a low-confidence sonnet approval waits for its opus recheck "
+                                             "(review-recheck)"}
     if v.get("head") != head_sha:
         return {"approved": False, "reason": f"the approved verdict is for head {v.get('head')}, not {head_sha}"}
     if pr is not None:
@@ -319,7 +381,7 @@ def decide_autopilot(issue, owner, labeled_by=None, max_replies=20, max_revision
         if last_verdict and last_verdict[0] > last_result[0]:
             return out("ignore", "the latest Code result is already reviewed")
         pr, head = last_result[1].get("pr"), last_result[1].get("head")
-        rnd = len(verdicts) + 1
+        rnd = sum(1 for _, h in verdicts if not is_recheck(h)) + 1
         return work("review", 2, header=f"<!-- loop:v1 from=lead type=verdict phase=2 pr={pr} head={head} "
                                        f"verdict=<approved|changes> turn={nt} -->",
                     pr=pr, head=head, review_round=rnd,
@@ -329,6 +391,17 @@ def decide_autopilot(issue, owner, labeled_by=None, max_replies=20, max_revision
             return out("ignore", "waiting for a review of the latest head")
         v = last_verdict[1]
         pr, head = v.get("pr"), v.get("head")
+        if recheck_needed(msgs, verdicts):
+            if last_result and last_result[1].get("head") != head:
+                return out("needs-leo", "the approved verdict names a different head than the latest Code result",
+                           phase=2, role="code")
+            unchecked = unchecked_of(msgs[last_verdict[0]]["body"]) or "the items the first review could not check"
+            return work("review-recheck", 2,
+                        notes=f"recheck only what the sonnet review left unchecked: {unchecked}",
+                        header=f"<!-- loop:v1 from=lead type=verdict phase=2 pr={pr} head={head} "
+                               f"verdict=<approved|changes> recheck=yes turn={nt} -->",
+                        pr=pr, head=head, review_round=sum(1 for _, h in verdicts if not is_recheck(h)),
+                        since=head)
         if v.get("verdict") == "approved":
             if last_result and last_result[1].get("head") != head:
                 return out("needs-leo", "the approved verdict names a different head than the latest Code result",

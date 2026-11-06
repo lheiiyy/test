@@ -24,6 +24,12 @@ Rules:
   `(wanted opus; ran inline, no subagent)` or `(via subagent)`, so the gap is never hidden.
   With --session (the model this task runs on), the line must name that model unless it says
   `via subagent`, so a Sonnet task cannot claim an Opus review.
+- A verdict's Model line ends with the route's reason: `Model: sonnet. Why: score 2 (...)`,
+  `Why: hard stop (...)` or `Why: owner's Model line (...)` (pick_model.py prints it). A verdict
+  by sonnet also carries `Confidence: high|low` and `Unchecked: <what was not checked, or none>`;
+  a low-confidence sonnet approval gets one opus recheck of the Unchecked items before any merge.
+- A hold (`type=hold`) says why an opus step waits (the Opus cap) and labels needs-leo.
+- A defect note (`type=defect pr=<N>`) says "Galing sa #N": this bug came from merged loop PR N.
 - A plan reply also carries `Risk: low|normal|high`, `CI required: yes|no` and
   `Files in scope: <folders/ and files>`; the merge gate reads all three (high risk or a file
   outside the scope means the owner merges; CI required means checks must exist).
@@ -47,7 +53,7 @@ HEADER = re.compile(r"<!--\s*loop:v1\s+([^>]*?)-->")
 URL = re.compile(r"https?://\S+")
 SHA = re.compile(r"\A[0-9a-f]{40}\Z")
 ALLOWED_ADD = {"needs-leo", "done", "awaiting-approval", "to-review", "reviewed"}
-TYPES = {"result", "question", "plan", "summary", "verdict", "approval"}
+TYPES = {"result", "question", "plan", "summary", "verdict", "approval", "hold", "defect"}
 PHASE_FOR_TYPE = {"plan": "1", "summary": "2", "verdict": "2"}
 LIMITS = {"summary": 250, "verdict": 400}
 REPORT_LINES = ["implemented and tested", "reviewed", "merged", "deployed", "blocked or unverified"]
@@ -59,6 +65,29 @@ RISK_LINE = re.compile(r"(?im)^[ \t>*-]*risk[ \t]*:[ \t]*\**[ \t]*(low|normal|hi
 CI_LINE = re.compile(r"(?im)^[ \t>*-]*CI required[ \t]*:[ \t]*\**[ \t]*(yes|no)\b")
 RELAY = re.compile(r"(?m)^APPROVED by [^\n]{1,60}? in chat on \d{4}-\d{2}-\d{2}: [\u201c\"]APPROVED\b")
 FAMILIES = ("haiku", "sonnet", "opus", "fable")
+WHY = re.compile(r"(?i)^(score \d+ \(.+\)|hard stop \(.+\)|owner's Model line \(.+\))$")
+CONFIDENCE = re.compile(r"(?im)^[ \t>*-]*\**Confidence\**[ \t]*:[ \t]*\**[ \t]*(high|low)\b")
+UNCHECKED = re.compile(r"(?im)^[ \t>*-]*\**Unchecked\**[ \t]*:[ \t]*\**[ \t]*(\S.*)$")
+
+
+def split_why(line):
+    """('Model: sonnet', 'score 2 (...)') from 'Model: sonnet. Why: score 2 (...)'; the reason is None without Why:."""
+    m = re.search(r"\bWhy:", line)
+    if not m:
+        return line.strip(), None
+    return line[:m.start()].rstrip(" \t.;,-").strip(), line[m.end():].strip()
+
+
+def model_line(text):
+    """(ran, note, why) for the one Model line, or None when there is not exactly one well-formed line."""
+    found = MODEL_ANY.findall(FOOTER.sub("", text))
+    if len(found) != 1:
+        return None
+    head, why = split_why(found[0])
+    m = MODEL_LINE.match(head)
+    if not m:
+        return None
+    return m.group(1).lower(), m.group(2) or "", why
 
 
 def family(value):
@@ -71,14 +100,12 @@ def family(value):
 
 def model_problems(text, session=None):
     """Rules for the one `Model:` line an autopilot reply must carry."""
-    found = MODEL_ANY.findall(FOOTER.sub("", text))
-    good = [l for l in found if MODEL_LINE.match(l.strip())]
-    if len(found) != 1 or len(good) != 1:
+    parsed = model_line(text)
+    if not parsed:
         return ["carry exactly one line `Model: <haiku|sonnet|opus>` naming the model that actually produced this "
                 "reply; if the step wanted another tier, add `(wanted opus; ran inline, no subagent)` or "
                 "`(via subagent)`"]
-    m = MODEL_LINE.match(good[0].strip())
-    ran, note = m.group(1).lower(), m.group(2) or ""
+    ran, note, _ = parsed
     wanted = WANTED.search(note)
     if wanted and wanted.group(1).lower() != ran and not re.search(r"\b(inline|subagent)\b", note, re.I):
         return ["the Model line says the step wanted another tier; add whether it ran inline or via subagent"]
@@ -87,6 +114,25 @@ def model_problems(text, session=None):
         return [f"the Model line names {ran}, but this task runs {running}: name {running} (add `wanted {ran}; ran "
                 f"inline`), or say `via subagent` only if a {ran} subagent really did the step"]
     return []
+
+
+def review_problems(text):
+    """A verdict names why its model was picked; a sonnet verdict says how sure it is and what it did not check."""
+    parsed = model_line(text)
+    if not parsed:
+        return []  # model_problems already names the missing Model line
+    ran, _, why = parsed
+    problems = []
+    if not why or not WHY.match(why):
+        problems.append("end the verdict's Model line with the route's reason, as pick_model.py prints it: "
+                        "`. Why: score N (...)`, `. Why: hard stop (...)` or `. Why: owner's Model line (...)`")
+    if ran == "sonnet":
+        if not CONFIDENCE.search(text):
+            problems.append("a sonnet verdict carries one line `Confidence: high|low` (low: one opus recheck of the "
+                            "Unchecked items runs before any merge)")
+        if not UNCHECKED.search(text):
+            problems.append("a sonnet verdict carries one line `Unchecked: <what you could not check, or none>`")
+    return problems
 
 
 def last_lines(text, n=2):
@@ -112,6 +158,8 @@ def check(text, turn, add, remove, max_words=None, expect_from="code", session=N
             problems.append("header type must be one of " + ", ".join(sorted(TYPES)))
         elif rtype in PHASE_FOR_TYPE and fields.get("phase") != PHASE_FOR_TYPE[rtype]:
             problems.append(f"a {rtype} reply must say phase={PHASE_FOR_TYPE[rtype]}")
+        if rtype == "defect" and not str(fields.get("pr", "")).isdigit():
+            problems.append("a defect note names the merged PR that caused the bug: pr=<number>")
         if rtype in ("verdict", "approval") and fields.get("from") != "lead":
             problems.append(f"only the Lead posts a {rtype}")
         if (rtype == "result" and fields.get("phase") == "2") or rtype == "verdict":
@@ -129,6 +177,8 @@ def check(text, turn, add, remove, max_words=None, expect_from="code", session=N
                 problems.append(f"the last two lines must be: {want[0]} / {want[1]}")
         if rtype in ("plan", "verdict", "summary") or (rtype == "result" and fields.get("phase") == "2"):
             problems += model_problems(text, session)
+        if rtype == "verdict":
+            problems += review_problems(text)
         if rtype == "plan":
             if not RISK_LINE.search(text):
                 problems.append("a plan reply carries one line `Risk: low|normal|high` (high: the owner merges)")

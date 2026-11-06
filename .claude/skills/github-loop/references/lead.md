@@ -1,10 +1,10 @@
 # Lead: Claude Cowork as Technical Lead
 
-Read this when triage gives `role: lead` work (`plan`, `revise`, `review`, or `continue` with phase 1), or when the owner asks in chat to plan a feature, review a PR or check the loop. Commands run from the skill folder with `export PYTHONDONTWRITEBYTECODE=1` set.
+Read this when triage gives `role: lead` work (`plan`, `revise`, `review`, `review-recheck`, or `continue` with phase 1), or when the owner asks in chat to plan a feature, review a PR or check the loop. Commands run from the skill folder with `export PYTHONDONTWRITEBYTECODE=1` set.
 
 ## Every run
 
-0. **Housekeeping first (SKILL.md, "Every run", steps 2 and 3).** Reopen each `reopen` entry, then run triage again. Park each `stalled` entry with `--from lead` (it is Code's work that nobody picked up). If that was all there was and `work` is empty, say what you did in one line and stop.
+0. **Housekeeping first (SKILL.md, "Every run", steps 2 and 3).** Reopen each `reopen` entry, then run triage again. Park each `stalled` entry with `--from lead` (it is Code's work that nobody picked up). Hold each `hold` entry (only when an Opus cap is set): `python scripts/loop_gh.py hold --repo <o>/<r> --issue <N> --turn <next_turn> --work-type <work_type> --from lead --reason "<reason>"`. If that was all there was and `work` is empty, say what you did in one line and stop.
 1. **Repo identity gate.** The request's repo and project folder must match the repo you are in. If they do not, run `python scripts/loop_gh.py park --repo <o>/<r> --issue <N> --turn <next_turn> --phase 1 --from lead --reason "repo mismatch: ..."` and stop before any change.
 2. **Claim:** `python scripts/loop_gh.py claim --repo <o>/<r> --issue <N>`. Exit code 3 → stop.
 3. **Read only what is needed:** the issue, the project's `CLAUDE.md`, the docs the request names, and for a review, the plan file. Never read the whole codebase.
@@ -20,7 +20,7 @@ For a new project or system, plan with **web-app-project-planning**: in chat, it
    - Status per row: `READY`, `NEEDS SETUP`, `BLOCKED`, `NOT REQUIRED` or `UNVERIFIED`. READY needs evidence; a row you could not check is UNVERIFIED.
    - For each row that is not READY, say the issue, the impact, the setup needed, who does it, any safe alternative, and which stage it blocks.
    - Never print a secret value.
-3. **Write the plan,** each section tight:
+3. **Write the plan,** each section tight. These are the six default sections. When the settings say `plan_sections: "lite"`, write four instead: **Goal**, **Tasks** (with the model plan line), **Tests** and **Merge plan** (the same three lines); a list in `plan_sections` names the sections. Put the plan under `plan_dir` when it is set, and when `commit_ref_pattern` is set, add one line to the Merge plan showing the commit reference format (for example `Commits: feat(#12): ...`), because the merge gate checks every commit message against it:
    1. **Business plan:** problem, users, value, scope, out of scope, success metrics, risks, effort estimate.
    2. **Architecture:** components, data flow, schema changes, integration points, migration path, and key decisions with a one-line reason each.
    3. **Task breakdown:** ordered tasks, each with its agent (Code), the files touched and a pass/fail check. Six tasks or fewer; split a bigger request and say so under scope. Then add one line, `Model plan: build <tier>; review <tier> (<reason>); fix <tier>, opus on a second attempt`, from `pick_model.py` run for build, review and fix with the files the tasks touch and `--tasks <n>`. `check_plan.py` requires a tier name here.
@@ -32,17 +32,19 @@ For a new project or system, plan with **web-app-project-planning**: in chat, it
 5. Commit once (`Plan: <slug> (awaiting approval)`) and push. On the first plan, open a normal PR, never a draft (REST cannot mark a draft ready). Title: `Plan: <feature> (awaiting approval)`. Body: `Refs #<N>`.
 6. Write the reply: the entry's `reply_header`, then 150 words or fewer. Include the plan link, the PR, a 3-line summary, the items that are not READY with the owner's checklist, the assumptions, the `Risk:`, `CI required:` and `Files in scope:` lines from the plan, and the one true `Model:` line. End with: "Reply `APPROVED` (capitals) to build and merge, or `REVISE: <notes>`. Tap Comment, not Close with comment." For a high-risk plan add: "This is high risk, so you merge it at the end."
 7. Run `python scripts/loop_gh.py post-plan --repo <o>/<r> --issue <N> --file reply.md --turn <next_turn> --plan-file <plan path> --git-base origin/main --session <this task's model>`. Then verify the hand-off (SKILL.md, step 6) and stop.
+8. **Bug from a merged PR? Link it yourself; the owner will not.** If the request fixes something a merged loop PR broke (the request says so, or `git log` on the broken lines shows a loop PR), run `python scripts/loop_gh.py defect --repo <o>/<r> --issue <N> --pr <that PR> --turn <next_turn + 1> --from lead` once, after the plan reply. It posts `Galing sa #<PR>` and labels the issue `bug`, which the review score's defect signal reads.
 
 **In a chat with the owner:** if no issue exists yet, file one from `references/task-template.md` with `to-code`, then follow the same steps on it (a plan kept in a chat document is posted with `--no-plan-file "<where>"` and the reply links it).
 - **Look for what exists before planning anything new.** Search the repo (its folders, specs and docs), its open and merged PRs and its issues for the same subject, with REST (`gh api repos/<o>/<r>/pulls?state=all`, `.../issues?state=all`, `.../contents/`). Say what you found. If a project already covers the request, plan the next slice on it instead of starting a new project, and ask the owner once only when the overlap is unclear. Do this before writing a plan in the chat, not after.
 - **Approval in chat:** when the owner's own words start with `APPROVED`, run `python scripts/loop_gh.py relay-approval --repo <o>/<r> --issue <N> --turn <next_turn> --quote "<the owner's exact words>"`. If they wrote anything else ("ok", "approve"), ask them to write `APPROVED`; the script refuses other words. Never from a scheduled run or on your own judgment.
+- **Merge phrase (exit 10):** a `MERGE` quote in a chat does not replace the repository's `merge_phrase`. Tell the owner to comment it on the PR, exactly as written.
 - **High-risk or out-of-scope merge in chat:** when `merge` parked a PR with exit 8 or 9 and the owner's own words in this chat start with `MERGE`, run `python scripts/loop_gh.py merge --repo <o>/<r> --issue <N> --pr <P> --owner-merge-quote "<the owner's exact words>"` (every other gate still applies, and the words go into the merge commit message), then continue with `verify` and the report as `references/autopilot.md` says. Otherwise the owner taps Merge on GitHub and replies `CONTINUE: merged`.
 
 ## Review: `review`
 
 You did not build this change. Judge it on evidence, not on Code's claims.
 
-1. Fetch the PR branch and confirm that its head equals the entry's `head`. Then run `python3 scripts/route.py --step review --git-range origin/main...<head> --round <n> --text <issue body file> --declared-risk <the plan's Risk> --session <this task's model>` and read the expert notes it lists. On `delegate`, a subagent with that model reads the diff against the checklist below and drafts `verdict.md`; you confirm the head and a fresh test run, then post. Otherwise review inline.
+1. Fetch the PR branch and confirm that its head equals the entry's `head`. Run `python3 scripts/review_history.py --repo <o>/<r> --issue <N> > history.json`, then `python3 scripts/route.py --step review --git-range origin/main...<head> --round <n> --text <issue body file> --declared-risk <the plan's Risk> --history history.json --opus-left <the entry's opus_left> --session <this task's model>` and read the expert notes it lists. If route.py prints `hold`, post `loop_gh.py hold` with that reason (`--work-type review`) and stop: never review on a weaker model instead. On `delegate`, a subagent with that model reads the diff against the checklist below and drafts `verdict.md`; you confirm the head and a fresh test run, then post. Otherwise review inline.
 2. **Scope of the read:**
    - Round 1: the full diff, `git diff origin/main...<head>`.
    - Later rounds: `git diff <since>..<head>` and the findings still open.
@@ -61,10 +63,15 @@ You did not build this change. Judge it on evidence, not on Code's claims.
    - First line: the entry's `reply_header`, with `verdict=approved` or `verdict=changes`.
    - One bullet per finding, tagged `[BLOCKER]`, `[MAJOR]`, `[MINOR]` or `[NIT]`, with file:line, the failure scenario and the fix.
    - Then one line on what you checked, and the test command with its result line.
-   - One true `Model:` line (`Model: opus (via subagent)`, or `Model: sonnet (wanted opus; ran inline, no subagent)`). Never claim a model that did not run; `--session` makes the script check it.
+   - One true `Model:` line, copied from route.py's `model_line`, so it ends with the reason: `Model: sonnet. Why: score 2 (2 feature areas; diff 150-400)`, or `Model: opus (via subagent). Why: hard stop (risk path src/platform/props.js)`. Never claim a model that did not run; `--session` makes the script check it.
+   - A **sonnet** verdict adds `Confidence: high|low` and `Unchecked: <what you could not check, or none>`. Say low when part of the change was beyond what you could verify; a low-confidence approval gets one opus recheck before the merge.
    - Last two lines: `Reviewed head <sha>`, then `VERDICT: APPROVED` or `VERDICT: CHANGES REQUESTED`.
    - Approve only with no BLOCKER or MAJOR left and the tests passing. 400 words or fewer.
 5. Run `python scripts/loop_gh.py verdict --repo <o>/<r> --issue <N> --pr <P> --file verdict.md --turn <next_turn> --session <this task's model>`. A head mismatch means Code pushed again: review the new head. Then verify the hand-off (SKILL.md, step 6).
+
+## Recheck: `review-recheck`
+
+A sonnet review approved with `Confidence: low`. Check **only** the items in the entry's notes (the first review's `Unchecked:` line) on the same head, with opus (`delegate` on a Sonnet task; if no subagent can run, say so in the Model line). Run route.py as for a review, with `--opus-left`; on `hold`, post the hold (`--work-type review-recheck`) and stop. Write the verdict as above, with the entry's `reply_header` (it carries `recheck=yes`). A head gets one recheck; its verdict is the one the merge reads.
 
 ## Escalate (park with `--from lead` and one batched question)
 

@@ -6,7 +6,7 @@ The approved plan authorizes everything in it, including the merge, and nothing 
 
 ## Every run
 
-0. **Housekeeping first (SKILL.md, "Every run", steps 2 and 3).** Reopen each `reopen` entry, then run triage again. Park each `needs_leo`, `stale` and `stalled` entry (`--from code` for a stalled plan or review: that is the Lead's work nobody picked up). If that was all there was and `work` is empty, say what you did in one line and stop.
+0. **Housekeeping first (SKILL.md, "Every run", steps 2 and 3).** Reopen each `reopen` entry, then run triage again. Park each `needs_leo`, `stale` and `stalled` entry (`--from code` for a stalled plan or review: that is the Lead's work nobody picked up). Hold each `hold` entry (the Opus cap, only when one is set): `python scripts/loop_gh.py hold --repo <o>/<r> --issue <N> --turn <next_turn> --work-type <work_type> --from code --reason "<reason>"`; it runs again by itself when a slot frees up, never on a weaker model. If that was all there was and `work` is empty, say what you did in one line and stop.
 1. **Repo identity gate.** The repo and project folder must match the request. If they do not, run `park --phase 2` with the reason, and stop before any change.
 2. **Claim:** `python scripts/loop_gh.py claim --repo <o>/<r> --issue <N>`. Exit code 3 → stop.
 3. **Read only:** the plan file (it is the spec), the issue, the project's `CLAUDE.md` and the files the plan names. For a fix, also read the latest verdict.
@@ -30,6 +30,7 @@ For `continue`, read the last park comment first. If it parked a merge ("Merge n
 
 1. Run `python scripts/loop_gh.py merge --repo <o>/<r> --issue <N> --pr <P> --method <the plan's method>`. It reads the plan's `Risk:` and `CI required:` lines itself.
    - Exit code 4, 5 or 6: park with the reason it gives (`--phase 2`).
+   - Exit code 10 (the repository's `merge_phrase` is set and the owner has not commented it yet): hold, do not park: `python scripts/loop_gh.py hold --repo <o>/<r> --issue <N> --turn <next_turn> --work-type merge --from code --reason "Waiting for the owner's merge phrase: <the phrase it prints>"`. The issue keeps `reviewed`; the next run merges once the phrase is there. A repeated hold is not posted twice.
    - Exit code 8 (high risk) or 9 (files outside the plan's scope), every other gate green: park with "<the problem it gives>. PR ready: <PR link>. Tap Merge, then reply CONTINUE: merged (or say MERGE in a chat with the Lead), or reply REVISE: to widen the plan". Never merge it yourself.
    - If a permission rule refuses the command itself: park with the reason "Merge needs one tap from you: <PR link>. Tap Merge, then reply CONTINUE: merged". Never work around a refusal. On the next `continue`, if the PR is already merged, go straight to step 2.
 2. Run `python scripts/loop_gh.py verify --repo <o>/<r> --issue <N> --pr <P>`. It must report `on_base: true`. Note the post-merge checks it lists.
@@ -37,6 +38,7 @@ For `continue`, read the last park comment first. If it parked a merge ("Merge n
    - `no deploy`: skip this step.
    - `staging automatic`: deploy through the authorized workflow, then verify the deployment separately (its URL, health or smoke check).
    - `production after the owner's CONTINUE: release`: park with "Ready to release <merge sha>: reply CONTINUE: release".
+   - `deploy: "off"` in the settings: skip this step whatever the plan says, and write `Deployed: no (deploy: off, manual step for the owner)`; `finish` refuses any other Deployed line.
    - Apps Script projects: clasp is not available in cloud runs, so report the deploy as a manual step for the owner, with the steps from `references/experts/appsscript.md` on the `Deployed:` line.
    - Never claim a deployment without evidence.
 4. **Write `summary.md`:** the entry's `reply_header`, then five lines, each one true and backed by evidence:
@@ -77,3 +79,4 @@ For `continue`, read the last park comment first. If it parked a merge ("Merge n
 | `REVISE: <notes>` | The Lead rewrites the plan (up to 3 times); any earlier `APPROVED` no longer counts |
 | `CONTINUE: <answer>` | Resumes the parked phase with the answer; the approval still stands, but files outside the plan's scope still wait for the owner at the merge |
 | `MERGE ...` (in a chat with the Lead) | Merges a PR that the gate parked with exit 8 (high risk) or 9 (outside the scope) |
+| The repository's `merge_phrase`, for example `OK i-merge #<PR>` (only when it is set) | Lets the gate merge that PR; comment it on the PR or the issue after the last push, exactly as written |
