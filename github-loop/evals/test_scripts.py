@@ -62,10 +62,15 @@ def result_reply(turn, head=SHA1, pr=6):
     return c(f"<!-- loop:v1 from=code type=result phase=2 pr={pr} head={head} turn={turn} -->\nREADY FOR REVIEW")
 
 
-def verdict_text(turn, verdict="approved", head=SHA1, pr=6):
+# Routing v2: a verdict's Model line ends with the route's Why, and a sonnet verdict says how sure it is.
+VERDICT_MODEL = "Model: sonnet. Why: score 1 (diff 150-400)"
+
+
+def verdict_text(turn, verdict="approved", head=SHA1, pr=6, confidence="high", unchecked="none"):
     word = "APPROVED" if verdict == "approved" else "CHANGES REQUESTED"
     return (f"<!-- loop:v1 from=lead type=verdict phase=2 pr={pr} head={head} verdict={verdict} turn={turn} -->\n"
-            f"Checked the diff against the plan; tests pass.\nModel: sonnet\nReviewed head {head}\nVERDICT: {word}\n")
+            f"Checked the diff against the plan; tests pass.\n{VERDICT_MODEL}\nConfidence: {confidence}\n"
+            f"Unchecked: {unchecked}\nReviewed head {head}\nVERDICT: {word}\n")
 
 
 def verdict_reply(turn, verdict="approved", head=SHA1, pr=6, user=OWNER, assoc="OWNER"):
@@ -895,8 +900,9 @@ class PickModelTests(unittest.TestCase):
             with self.subTest(text=text):
                 r = pm.pick("review", paths=["docs/a.md"], text="## Objective\nx\n" + text, session="sonnet")
                 self.assertEqual((r["tier"], r["forced"]), ("opus", True))
+        # routing v2: the owner's lower Model line never lowers a review hard stop (AUTH_FILES is one)
         r = pm.pick("review", paths=AUTH_FILES, text="Model: haiku", session="sonnet")
-        self.assertEqual((r["tier"], r["action"]), ("haiku", "run inline"))
+        self.assertEqual((r["tier"], r["action"]), ("opus", "delegate"))
         for text in ("Model: auto", FORM_REQUEST.format(model="Auto"), "Model plan: opus for the review",
                      "We use a data model: opus is not involved"):
             with self.subTest(text=text):
@@ -989,7 +995,7 @@ class ModelLineTests(unittest.TestCase):
         self.assertEqual(self.problems(self.PLAN + "Model: sonnet\n"), [])
         self.assertTrue(any("Model" in p for p in self.problems(self.RESULT, "to-review", "code", 3)))
         self.assertEqual(self.problems(self.RESULT + "Model: opus\n", "to-review", "code", 3), [])
-        verdict = verdict_text(5).replace("Model: sonnet\n", "")
+        verdict = verdict_text(5).replace(VERDICT_MODEL + "\n", "")
         self.assertTrue(any("Model" in p for p in self.problems(verdict, "reviewed", "lead", 5)))
         self.assertEqual(self.problems(verdict_text(5), "reviewed", "lead", 5), [])
         summary = ("<!-- loop:v1 from=code type=summary phase=2 turn=6 -->\nImplemented and tested: x.\nReviewed: x.\n"
@@ -1030,7 +1036,8 @@ class ModelLineTests(unittest.TestCase):
                     self.assertEqual(self.problems(self.PLAN + line + "\n"), [], line)
         gap = pm.pick("review", text="## Objective\nAdd role-based permissions.\n", session="sonnet")
         self.assertEqual(sorted(gap["model_line"]), ["inline", "subagent"])
-        self.assertEqual(gap["model_line"]["subagent"], "Model: opus (via subagent)")
+        self.assertEqual(gap["model_line"]["subagent"],
+                         "Model: opus (via subagent). Why: hard stop (the goal mentions role-based)")
         self.assertIn("wanted opus", gap["model_line"]["inline"])
 
 
@@ -2132,7 +2139,7 @@ class ModelSelectionTests(unittest.TestCase):
 
     def test_a_sonnet_task_cannot_post_an_opus_claim(self):
         fx = write_fixtures({"pr.json": {"head": {"sha": SHA1, "ref": "claude/x"}}})
-        text = verdict_text(5).replace("Model: sonnet", "Model: opus")
+        text = verdict_text(5).replace(VERDICT_MODEL, "Model: opus. Why: hard stop (risk path src/auth.js)")
         args = (os.path.join(SCRIPTS, "loop_gh.py"), "verdict", "--repo", "o/r", "--issue", "3", "--pr", "6",
                 "--file", reply_path(self, text), "--turn", "5", "--fixtures", fx, "--dry-run")
         code, out, _ = run(*args, "--session", "claude-sonnet-5-5")
@@ -2141,7 +2148,7 @@ class ModelSelectionTests(unittest.TestCase):
 
     def test_route_prints_the_line_the_check_accepts(self):
         r = rt.route("review", ["src/auth.js"], session="sonnet")
-        reply = verdict_text(5).replace("Model: sonnet", r["model"]["model_line"]["inline"])
+        reply = verdict_text(5).replace(VERDICT_MODEL, r["model"]["model_line"]["inline"])
         self.assertTrue(cr.check(reply, 5, ["reviewed"], ["code-working"], expect_from="lead", session="sonnet")["ok"])
 
 

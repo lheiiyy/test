@@ -44,7 +44,7 @@ class ConfigSchemaTests(unittest.TestCase):
         "branch_prefix": ["feat/", "docs/"], "owner_associations": ["OWNER"], "improve": False,
         "risk_paths": ["src/repository/**"], "authority_docs": ["docs/RULES.md"], "risk_words": ["date", "sla"],
         "feature_roots": ["src/*"], "test_globs": ["spec/**"], "doc_globs": ["handbook/**"],
-        "points": {"areas": 2, "no_tests": 0}, "threshold": 4, "max_opus_per_day": 0, "plan_dir": "docs/plans",
+        "points": {"areas": 2, "no_tests": 0}, "threshold": 4, "max_opus_per_window": 0, "opus_window_hours": 4, "plan_dir": "docs/plans",
         "plan_sections": "lite", "commit_ref_pattern": r"^(feat|docs)\(#\d+\)", "merge_phrase": "OK i-merge #{n}",
         "deploy": "off"}
 
@@ -74,7 +74,8 @@ class ConfigSchemaTests(unittest.TestCase):
             "negative point": ({"points": {"no_tests": -1}}, "points:"),
             "point too high": ({"points": {"areas": 6}}, "points:"),
             "unknown point": ({"points": {"vibes": 1}}, "unknown point names vibes"),
-            "opus cap": ({"max_opus_per_day": 51}, "max_opus_per_day:"),
+            "opus cap": ({"max_opus_per_window": 51}, "max_opus_per_window:"),
+            "opus window": ({"opus_window_hours": 0}, "opus_window_hours:"),
             "risk word case": ({"risk_words": ["Date"]}, "risk_words:"),
             "risk word phrase": ({"risk_words": ["due date"]}, "risk_words:"),
             "bad regex": ({"commit_ref_pattern": "(feat"}, "commit_ref_pattern:"),
