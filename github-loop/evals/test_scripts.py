@@ -1853,7 +1853,8 @@ class ConfigTests(unittest.TestCase):
     def test_an_unknown_key_is_an_error(self):
         code, out, _ = self.triage(config={"ownr": OWNER})
         self.assertEqual(code, 2)
-        self.assertIn("unknown keys", out["error"])
+        self.assertIn("unknown key `ownr`", out["error"])
+        self.assertIn("did you mean `owner`", out["error"])
 
     def test_the_owners_name_is_used_in_a_relayed_approval(self):
         d = tempfile.mkdtemp()
@@ -2091,7 +2092,8 @@ class DocsConsistencyTests(unittest.TestCase):
     def test_skill_frontmatter(self):
         text = self.text()["SKILL.md"]
         head = text.split("---")[1]
-        self.assertIn("name: github-loop", head)
+        # YAML allows the name quoted or bare: name: github-loop / name: "github-loop"
+        self.assertRegex(head, r"(?m)^name:[ \t]*([\"']?)github-loop\1[ \t]*$")
         description = head.split("description:", 1)[1].strip()
         self.assertLessEqual(len(description), 1024)
 

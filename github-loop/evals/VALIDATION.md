@@ -103,3 +103,18 @@ Branch `claude/loop-portable`, based on `main` at `84c8021`. The only GitHub wri
 | `flake8 --select F` on scripts and tests | 0 |
 | `init_repo.py --install-skill --prompts` into an empty folder | 3 files plus the skill written; a second run reports `unchanged`; the generated issue form parses as YAML and has the same field ids as the live form |
 | Not run | A live scheduled task created from a rendered prompt; `--create-labels` against GitHub (dry run only); a second real repository |
+
+## PR-A: settings schema, one glob matcher, source-only counting (2026-11-06)
+
+Branch `claude/skill-fix-a`, based on `main` at `6fb85e8` (A0 merged). Plan: `docs/plan-skill-fixes.md` rev 3, section PR-A.
+
+| Command | Result |
+|---|---|
+| `python3 -B evals/test_scripts.py` on `main` before any change (A0 baseline) | 213 run, 1 failure (`test_skill_frontmatter`) |
+| `python3 -B evals/test_scripts.py` on this branch | 213 run, 213 OK. Two test bodies changed on purpose: `test_skill_frontmatter` accepts a quoted or bare `name:`, and `test_an_unknown_key_is_an_error` expects the new message (`unknown key` and `did you mean`). No test encoded the old file-count rule in a way that changed. |
+| `python3 -B evals/test_config_rules.py` (new) | 19 run, 19 OK: every key loads, did-you-mean, 17 bad values, null means default, the 7-key file loads as before, the TDMS glob list (12 must match, 4 must not), matcher rules, file kinds, feature areas, the skill source folder, `risk_paths` only adds, source-only counting, route and the CLIs read the settings, a prefix list and `risk_paths` at the merge gate, triage and readiness run with the profile |
+| `test_fire.py`, `test_route_event.py`, `test_workflow.py` | 10 OK; 30 OK; 9 OK (1 skipped: no installed workflow copy) |
+| 14 hand-made mutations (glob `*` crossing `/`, `**` needing a level, case, `risk_paths` ignored, source folder not the skill, tests counted as source, the shortest feature root winning, `large` counting every file, the gate or route dropping the settings, a list prefix crashing, an unknown key accepted, `points` replacing the defaults, ranges unchecked) | 12 caught on the first run; the 2 survivors led to 2 new assertions, and then all 14 were caught |
+| `flake8 --select F` on scripts and tests | 0 |
+| `npm test` in `trip-monitoring/` (not edited) | 38 run, 38 pass; its regenerated screenshots restored before commit |
+

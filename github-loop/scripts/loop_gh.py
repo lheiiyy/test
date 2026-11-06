@@ -400,7 +400,8 @@ def cmd_merge(a, plan):
     if source != a.repo.lower():
         problems.append(f"PR comes from {source or 'an unknown repository'}, not {a.repo} (forks are never merged)")
     if not str(head.get("ref", "")).startswith(a.branch_prefix):
-        problems.append(f"PR head is not a {a.branch_prefix} branch")
+        names = [a.branch_prefix] if isinstance(a.branch_prefix, str) else list(a.branch_prefix)
+        problems.append(f"PR head is not a {' or '.join(names)} branch")
     if (pr.get("base") or {}).get("ref") != a.base:
         problems.append(f"PR base is not {a.base}")
     if pr.get("mergeable") is not True or pr.get("mergeable_state") not in ("clean", "has_hooks"):
@@ -413,7 +414,7 @@ def cmd_merge(a, plan):
 
     scope = facts["scope"]
     outside = scope_problems(scope) or outside_scope(paths, scope)
-    risk, reasons = risk_tier(paths, facts["risk"])
+    risk, reasons = risk_tier(paths, facts["risk"], getattr(a, "cfg", None))
     owner_needed = []  # (exit code, why): the owner decides these, never an agent
     if outside:
         owner_needed.append((9, "files outside the plan's scope (" + ", ".join(outside) + ")"))
@@ -531,7 +532,8 @@ def main():
     try:
         cfg = loop_config.load(a.config)
         set_owner_associations(cfg["owner_associations"])
-        a.branch_prefix, a.owner_name = cfg["branch_prefix"], cfg.get("owner_name")
+        a.cfg = cfg
+        a.branch_prefix, a.owner_name = loop_config.prefixes(cfg), cfg.get("owner_name")
         if getattr(a, "base", "unset") is None:
             a.base = cfg["base"]
         if a.cmd in NEEDS_OWNER:

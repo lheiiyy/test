@@ -26,6 +26,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
+import config as loop_config  # noqa: E402
 from pick_model import objective_of, paths_from_git, pick  # noqa: E402
 from rules import DOCS, RISK_TEXT, is_docs_only, norm, risk_tier  # noqa: E402
 
@@ -66,12 +67,13 @@ def matches(expert, step, paths, goal, tier):
     return any(re.search(rx, goal, re.I) for rx in expert.get("words", []))
 
 
-def route(step, paths=(), text="", declared=None, round_=1, attempt=1, tasks=0, session=None, registry=REGISTRY):
+def route(step, paths=(), text="", declared=None, round_=1, attempt=1, tasks=0, session=None, registry=REGISTRY,
+          cfg=None):
     if step not in STEPS:
         raise ValueError(f"unknown step {step!r}; use one of {', '.join(STEPS)}")
     paths = norm(paths)
     goal = objective_of(text or "")
-    tier, reasons = risk_tier(paths, declared)
+    tier, reasons = risk_tier(paths, declared, cfg)
     words = RISK_TEXT.search(goal)
     if words and tier != "high":
         tier, reasons = "high", reasons + [f"the request mentions {words.group(1).lower()}"]
@@ -84,7 +86,8 @@ def route(step, paths=(), text="", declared=None, round_=1, attempt=1, tasks=0, 
     if tier == "high":
         gates += HIGH_GATES
     gates += [EXPERT_GATES[e["id"]] for e in chosen if e["id"] in EXPERT_GATES and EXPERT_GATES[e["id"]] not in gates]
-    model = pick(step, paths, text, tasks, attempt, round_, session, declared="high" if tier == "high" else None)
+    model = pick(step, paths, text, tasks, attempt, round_, session, declared="high" if tier == "high" else None,
+                 cfg=cfg)
     return {"step": step, "risk": tier, "risk_reasons": reasons,
             "experts": [{"id": e["id"], "note": e.get("note")} for e in chosen],
             "gates": gates, "model": model, "files": len(paths)}
@@ -103,6 +106,7 @@ def main():
     ap.add_argument("--tasks", type=int, default=0)
     ap.add_argument("--session", default=None, help="model of the running task")
     ap.add_argument("--registry", default=REGISTRY)
+    ap.add_argument("--config", default=None, help="settings file (default .github/github-loop.json)")
     a = ap.parse_args()
     try:
         paths = list(a.paths) + (paths_from_git(a.git_range) if a.git_range else [])
@@ -112,7 +116,8 @@ def main():
         elif a.text:
             with open(a.text, encoding="utf-8") as f:
                 text = f.read()
-        out = route(a.step, paths, text, a.declared_risk, a.round_, a.attempt, a.tasks, a.session, a.registry)
+        out = route(a.step, paths, text, a.declared_risk, a.round_, a.attempt, a.tasks, a.session, a.registry,
+                    loop_config.load(a.config))
     except (ValueError, OSError) as e:
         json.dump({"ok": False, "error": str(e)}, sys.stdout, indent=2)
         print()
