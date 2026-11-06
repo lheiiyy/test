@@ -900,9 +900,9 @@ class PickModelTests(unittest.TestCase):
             with self.subTest(text=text):
                 r = pm.pick("review", paths=["docs/a.md"], text="## Objective\nx\n" + text, session="sonnet")
                 self.assertEqual((r["tier"], r["forced"]), ("opus", True))
-        # routing v2: a review is clamped to sonnet or opus, so the owner's haiku is lifted to the sonnet floor
+        # routing v2: the owner's lower Model line never lowers a review hard stop (AUTH_FILES is one)
         r = pm.pick("review", paths=AUTH_FILES, text="Model: haiku", session="sonnet")
-        self.assertEqual((r["tier"], r["action"]), ("sonnet", "run inline"))
+        self.assertEqual((r["tier"], r["action"]), ("opus", "delegate"))
         for text in ("Model: auto", FORM_REQUEST.format(model="Auto"), "Model plan: opus for the review",
                      "We use a data model: opus is not involved"):
             with self.subTest(text=text):

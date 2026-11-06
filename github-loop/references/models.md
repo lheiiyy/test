@@ -53,7 +53,11 @@ A review goes to opus for a **hard stop** or a **score**, and to sonnet otherwis
 
 **A sonnet verdict** carries `Confidence: high|low` and `Unchecked: <what it could not check, or none>`. A low-confidence **approval** is not final: the Lead gets one `review-recheck` work entry (opus, limited to the Unchecked items) for that head, posted as a verdict with `recheck=yes`, and the merge waits for it. A head gets at most one recheck. A low-confidence CHANGES REQUESTED goes to the fix as before, and the next head is reviewed anyway.
 
-**Daily Opus cap** (`max_opus_per_day`, default 3, settable 0-50): triage counts today's loop replies whose Model line names opus. **The day is the UTC day, so it resets at 08:00 Manila**; there is no setting for it. An opus step over the cap is put on hold with `loop_gh.py hold` (needs-leo, reason `Opus cap N/N reached (UTC day)`): it keeps its labels and runs again by itself after the reset, and it is **never** run on a weaker model instead. The owner's `Model: opus` is counted but never held. A recheck counts toward the cap. `route.py --opus-left <the entry's opus_left>` applies the same rule when the real diff turns a step into opus.
+**Opus cap** (off by default): set `max_opus_per_window` (0-50) to allow at most that many opus steps in the last `opus_window_hours` (default 5, settable 1-24). Triage then counts the loop replies whose Model line names opus in that rolling window, so a slot frees up at most 5 hours after an opus step. An opus step over the cap is put on hold with `loop_gh.py hold` (needs-leo, reason `Opus cap N/N reached (last 5 hours)`): it keeps its labels and runs again by itself when a slot frees up, and it is **never** run on a weaker model instead. The owner's `Model: opus` is counted but never held. A recheck counts toward the cap. `route.py --opus-left <the entry's opus_left>` applies the same rule when the real diff turns a step into opus. Without `max_opus_per_window`, nothing is counted and nothing is held.
+
+**A hard stop beats the owner's lower Model line.** `Model: sonnet` or `Model: haiku` on a request does not lower a review that has a hard stop: that review is opus. `Model: opus` always raises.
+
+**Bugs from a merged PR** (the loop does this, not the owner): when a request fixes something a merged loop PR broke, the Lead runs `loop_gh.py defect --pr <N>` once. It posts `Galing sa #N`, labels the issue `bug`, and from then on the post-merge defect signal can score that area.
 
 Only the goal counts for risk words in a request (the Objective section), because the rest of the template holds boilerplate such as "schema changes" and "credentials".
 
@@ -87,7 +91,7 @@ A scheduled run showed no subagent use, so a Sonnet Lead cannot reliably hand a 
 | Task | Triage flags | Takes |
 |---|---|---|
 | Lead (Sonnet, started by events) | `--role lead --max-tier sonnet` | Work whose tier is sonnet or lower. Opus-tier work waits in `deferred`. |
-| Lead Deep (Opus, scheduled every 2 hours; events do not start it) | `--role lead --min-tier opus` | Only opus-tier work: a review hard stop or a score at or above `threshold`, a `review-recheck`, sensitive files or goal words in a plan, an architecture-heavy goal, the second revision, or Leo's `Model: opus`. Over the daily Opus cap, the work is held (needs-leo), not run. |
+| Lead Deep (Opus, scheduled every 2 hours; events do not start it) | `--role lead --min-tier opus` | Only opus-tier work: a review hard stop or a score at or above `threshold`, a `review-recheck`, sensitive files or goal words in a plan, an architecture-heavy goal, the second revision, or Leo's `Model: opus`. Over the Opus cap (when one is set), the work is held (needs-leo), not run. |
 
 - Each work entry carries `tier` and `tier_reason`, an estimate from the request and the PR's file list (one extra call, review and fix only). The step still runs `pick_model.py` with the real diff, and that answer wins.
 - **No deadlock:** after `--defer-minutes` (default 120) the normal Lead takes deferred work anyway. The entry then has a `tier_note`, and the Model line must say `wanted opus; ran inline`. If Lead Deep does not exist, leave `--max-tier` off.

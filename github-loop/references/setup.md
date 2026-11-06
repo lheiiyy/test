@@ -103,7 +103,8 @@ Every key is optional; without it the loop behaves as before. A wrong type or an
 | `risk_words` | list | none | lowercase single words | review scoring (routing v2) |
 | `points` | object | areas 3, files 3, lines 2, risk_words 3, contract 2, authority 2, no_tests 2, changes_requested 1, defect 2 | these 9 names only, 0-5 each | review scoring (routing v2) |
 | `threshold` | integer | 3 | 2-10 | review scoring (routing v2) |
-| `max_opus_per_day` | integer | 3 | 0-50 | daily Opus cap (routing v2) |
+| `max_opus_per_window` | integer or null | none (no cap) | 0-50 | Opus cap over the window (routing v2) |
+| `opus_window_hours` | integer | 5 | 1-24 | the cap's rolling window (routing v2) |
 | `plan_dir` | string | none | a folder | plan check (process fit) |
 | `plan_sections` | `"lite"` or list | the six heavy sections | | plan check (process fit) |
 | `commit_ref_pattern` | regex string | none | must compile | plan check, merge gate (process fit) |

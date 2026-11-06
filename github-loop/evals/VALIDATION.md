@@ -133,3 +133,16 @@ Branch `claude/skill-fix-b`, based on `main` at `045cad5` (PR-A merged). Plan: `
 | `npm test` in `trip-monitoring/` (not edited) | 38 run, 38 pass; regenerated screenshots restored before commit |
 | Not run | A live review on GitHub with the new lines; `review_history.py` and `improve.py --open-issue` against the GitHub API (fixtures and dry run only) |
 
+### PR-B revision after Leo's review (2026-11-06)
+
+Leo's decisions on the review checklist: R1 hold, with a 5-hour reset instead of the UTC day; R3 a hard stop always reviews on opus, even under the owner's `Model: sonnet`; R4 no Opus cap for now (it stays available as a setting); R7 the loop links a bug to the merged PR itself (`loop_gh.py defect`). R2, R5 and R6 as proposed.
+
+| Command | Result |
+|---|---|
+| `python3 -B evals/test_scripts.py` | 213 run, 213 OK (the owner's `Model: haiku` on a sensitive review now gives opus, by R3) |
+| `python3 -B evals/test_routing_v2.py` | 43 run, 43 OK (cap tests rewritten for the window and the off-by-default cap; new: hard stop beats a lower Model line, an overruled `Model: sonnet` is still held, `DefectLinkTests`) |
+| `python3 -B evals/test_config_rules.py` | 19 run, 19 OK (`max_opus_per_window`, `opus_window_hours` replace `max_opus_per_day`) |
+| `test_fire.py`, `test_route_event.py`, `test_workflow.py` | 10 OK; 30 OK; 9 OK (1 skipped) |
+| 42 hand-made mutations (the 32 before, updated, plus: the window ignoring its hours, route holding without a cap, the owner lowering a hard stop, a forced sonnet escaping the cap, the cap on by default, the hold note ignoring the window, a defect note counted as a reply, a defect linked to any PR, review_history or outcomes ignoring defect notes, defect notes on any issue) | 40 caught on the first run; the 2 survivors led to 2 new tests, and then all 42 were caught |
+| `flake8 --select F` on scripts and tests | 0 |
+

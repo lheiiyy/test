@@ -1,5 +1,6 @@
 """Tests for PR-B of docs/plan-skill-fixes.md: review routing v2 (score, hard stops, Why line, confidence and
-recheck, the daily Opus cap and holds, review history, outcomes fields, improve proposals).
+recheck, the Opus cap over a rolling window and holds, defect links, review history, outcomes fields,
+improve proposals).
 Run: python3 -B evals/test_routing_v2.py
 
 Offline: GitHub is simulated with fixtures, as in test_scripts.py. Kept out of the packaged skill.
@@ -184,12 +185,19 @@ class HardStopTests(unittest.TestCase):
         r = review(["src/platform/props.js", "tests/p.test.js"], cfg=profile())
         self.assertEqual((r["tier"], r["review"]["hard_stop_code"]), ("opus", "risk_path"))
 
-    def test_the_owner_override_is_clamped(self):
+    def test_the_owner_override_is_clamped_and_never_lowers_a_hard_stop(self):
         r = review(["src/a.js", "tests/a.test.js"], text="Model: haiku")
         self.assertEqual((r["tier"], r["forced"]), ("sonnet", True))
         self.assertIn("Why: owner's Model line (haiku; haiku lifted to the sonnet floor)", r["model_line"]["inline"])
-        r = review(["src/auth.js"], text="Model: sonnet")
-        self.assertEqual(r["tier"], "sonnet", "the owner's Model line wins over a hard stop")
+        self.assertEqual(review(["src/a.js", "tests/a.test.js"], text="Model: sonnet")["tier"], "sonnet")
+        for lower in ("sonnet", "haiku"):
+            with self.subTest(lower):
+                r = review(["src/auth.js"], text=f"Model: {lower}")
+                self.assertEqual((r["tier"], r["forced_tier"]), ("opus", lower))
+                self.assertIn("Why: hard stop (risk path src/auth.js)", r["model_line"]["subagent"])
+                self.assertIn("cannot lower a hard stop", r["reasons"][0])
+        r = review(["src/a.js", "tests/a.test.js"], text="Model: opus")
+        self.assertEqual((r["tier"], r["forced_tier"]), ("opus", "opus"), "Model: opus always raises")
         self.assertNotEqual(review(["src/a.js"], text="Model: opus")["tier"], "fable")
 
 
@@ -246,7 +254,7 @@ class CheckReplyTests(unittest.TestCase):
         self.assertEqual(self.problems(owner), [])
 
     def test_a_hold_note(self):
-        text = "<!-- loop:v1 from=lead type=hold turn=5 -->\nOn hold: Opus cap 3/3 reached (UTC day).\n"
+        text = "<!-- loop:v1 from=lead type=hold turn=5 -->\nOn hold: Opus cap 3/3 reached (last 5 hours).\n"
         self.assertEqual(cr.check(text, 5, ["needs-leo"], ["code-working"], expect_from="lead")["problems"], [])
 
 
@@ -314,62 +322,81 @@ def opus_reply(when, model="opus"):
 
 class CapTests(unittest.TestCase):
     RISKY = ts.REQUEST.replace("Add a README to odometer-trips.", "Add role-based permissions.")
+    CAP = {"max_opus_per_window": 3}
 
-    def triage(self, today, issues=None, extra=None, now=ts.NOW, cfg=None):
+    def triage(self, recent, issues=None, extra=None, now=ts.NOW, cfg=None):
         files = {"issues.json": issues or [ts.ap_item(9, ["to-code"], body=self.RISKY)],
-                 "9.events.json": [ts.event("to-code", ts.OWNER, "2026-10-29T11:50:00Z")],
-                 "comments.today.json": today}
+                 "9.events.json": [ts.event("to-code", ts.OWNER, "2026-10-29T11:50:00Z")]}
+        if recent is not None:
+            files["comments.recent.json"] = recent
         files.update(extra or {})
         d = ts.write_fixtures(files)
         cfg_path = os.path.join(d, "cfg.json")
         with open(cfg_path, "w") as f:
-            json.dump(cfg or {}, f)
+            json.dump(self.CAP if cfg is None else cfg, f)
         code, out, err = ts.run(os.path.join(SCRIPTS, "triage.py"), "--repo", "o/r", "--owner", ts.OWNER, "--role",
                                 "lead", "--fixtures", d, "--now", now, "--config", cfg_path)
         self.assertEqual(code, 0, err)
         return out
 
+    def test_no_cap_by_default(self):
+        many = [opus_reply("2026-10-29T11:0%d:00Z" % m) for m in range(9)]
+        out = self.triage(many, cfg={})
+        self.assertEqual((len(out["work"]), out["hold"]), (1, []))
+        self.assertNotIn("opus_left", out["work"][0])
+        self.assertEqual(self.triage(None, cfg={})["work"][0]["tier"], "opus", "nothing is read without a cap")
+
     def test_the_fourth_opus_item_is_held_and_stays_opus(self):
-        three = [opus_reply("2026-10-29T0%d:00:00Z" % h) for h in (1, 2, 3)]
+        three = [opus_reply("2026-10-29T1%d:00:00Z" % h) for h in (0, 1, 1)]
         out = self.triage(three)
         self.assertEqual(out["work"], [])
         self.assertEqual(len(out["hold"]), 1)
         held = out["hold"][0]
         self.assertEqual((held["tier"], held["work_type"], held["reason"]),
-                         ("opus", "plan", "Opus cap 3/3 reached (UTC day)"))
+                         ("opus", "plan", "Opus cap 3/3 reached (last 5 hours)"))
         self.assertIn("to hold (Opus cap)", out["summary"])
 
     def test_under_the_cap_it_runs_and_counts(self):
-        out = self.triage([opus_reply("2026-10-29T01:00:00Z")])
+        out = self.triage([opus_reply("2026-10-29T10:00:00Z")])
         self.assertEqual((out["work"][0]["tier"], out["work"][0]["opus_left"]), ("opus", 1))
-        sonnet_only = [opus_reply("2026-10-29T01:00:00Z", model="sonnet")] * 5
+        sonnet_only = [opus_reply("2026-10-29T10:00:00Z", model="sonnet")] * 5
         self.assertEqual(self.triage(sonnet_only)["work"][0]["opus_left"], 2, "sonnet replies do not count")
 
-    def test_the_cap_is_the_utc_day(self):
-        late = [opus_reply("2026-10-29T23:59:00Z")] * 3
-        self.assertEqual(len(self.triage(late, now="2026-10-29T23:59:30Z")["hold"]), 1)
-        self.assertEqual(len(self.triage(late, now="2026-10-30T00:00:30Z")["work"]), 1, "cleared at 00:00 UTC")
+    def test_the_window_is_the_last_five_hours(self):
+        recent = [opus_reply("2026-10-29T07:01:00Z")] * 3          # 4 h 59 min before NOW (12:00)
+        self.assertEqual(len(self.triage(recent)["hold"]), 1)
+        old = [opus_reply("2026-10-29T06:59:00Z")] * 3             # 5 h 1 min before NOW
+        self.assertEqual(len(self.triage(old)["work"]), 1, "a slot frees up after 5 hours")
+        self.assertEqual(len(self.triage(recent, cfg=dict(self.CAP, opus_window_hours=4))["work"]), 1)
 
     def test_the_owners_opus_is_counted_but_never_held(self):
         forced = ts.ap_item(9, ["to-code"], body=self.RISKY + "\nModel: opus\n")
-        out = self.triage([opus_reply("2026-10-29T01:00:00Z")] * 3, issues=[forced])
+        out = self.triage([opus_reply("2026-10-29T10:00:00Z")] * 3, issues=[forced])
         self.assertEqual((len(out["work"]), out["work"][0]["opus_left"]), (1, 0))
 
+    def test_an_overruled_model_sonnet_is_still_held(self):
+        """Model: sonnet on a review with a hard stop runs opus (R3), so it counts against the cap like any opus."""
+        issue = ts.ap_item(9, ["to-review"], body=ts.REQUEST + "\nModel: sonnet\n")
+        thread = ts.APPROVED_THREAD + [ts.result_reply(4)]
+        out = self.triage([opus_reply("2026-10-29T10:00:00Z")] * 3, issues=[issue],
+                          extra={"9.comments.json": thread, "pr6.files.json": [{"filename": "src/auth.js"}]})
+        self.assertEqual((out["work"], out["hold"][0]["work_type"]), ([], "review"))
+
     def test_a_zero_cap_holds_every_opus_item(self):
-        out = self.triage([], cfg={"max_opus_per_day": 0})
-        self.assertEqual(out["hold"][0]["reason"], "Opus cap 0/0 reached (UTC day)")
+        out = self.triage([], cfg={"max_opus_per_window": 0})
+        self.assertEqual(out["hold"][0]["reason"], "Opus cap 0/0 reached (last 5 hours)")
 
     def test_a_held_issue_is_not_held_twice(self):
-        hold = ts.c("<!-- loop:v1 from=lead type=hold turn=2 -->\nOn hold: Opus cap 3/3 reached (UTC day).")
+        hold = ts.c("<!-- loop:v1 from=lead type=hold turn=2 -->\nOn hold: Opus cap 3/3 reached (last 5 hours).")
         issue = ts.ap_item(9, ["to-code", "needs-leo"], body=self.RISKY)
-        out = self.triage([opus_reply("2026-10-29T0%d:00:00Z" % h) for h in (1, 2, 3)], issues=[issue],
+        out = self.triage([opus_reply("2026-10-29T1%d:00:00Z" % h) for h in (0, 1, 1)], issues=[issue],
                           extra={"9.comments.json": [hold]})
         self.assertEqual(out["hold"], [])
         self.assertTrue(any("on hold" in i.get("reason", "") for i in out["ignored"]))
 
     def test_a_hold_is_not_a_reply(self):
         """A waiting APPROVED still counts after a hold note, so the build resumes by itself."""
-        hold = ts.c("<!-- loop:v1 from=code type=hold turn=4 -->\nOn hold: Opus cap 3/3 reached (UTC day).")
+        hold = ts.c("<!-- loop:v1 from=code type=hold turn=4 -->\nOn hold: Opus cap 3/3 reached (last 5 hours).")
         issue = ts.ap_issue(["awaiting-approval", "needs-leo"],
                             [ts.c(ts.plan_reply()["body"]), ts.c("APPROVED"), hold])
         self.assertEqual(g.decide(issue, ts.OWNER)["work_type"], "build")
@@ -382,30 +409,103 @@ class CapTests(unittest.TestCase):
         self.assertEqual((out["work"][0]["work_type"], out["work"][0]["tier"], out["work"][0]["opus_left"]),
                          ("review-recheck", "opus", 2))
 
-    def test_route_holds_when_no_opus_is_left(self):
-        r = rt.route("review", ["src/auth.js"], session="sonnet", cfg=plain(), opus_left=0)
-        self.assertEqual(r["hold"]["reason"], "Opus cap 3/3 reached (UTC day)")
-        self.assertNotIn("hold", rt.route("review", ["src/auth.js"], session="sonnet", cfg=plain(), opus_left=1))
-        self.assertNotIn("hold", rt.route("review", ["src/a.js", "tests/a.test.js"], session="sonnet", cfg=plain(),
+    def test_route_holds_only_with_a_cap(self):
+        capped = dict(plain(), max_opus_per_window=3)
+        r = rt.route("review", ["src/auth.js"], session="sonnet", cfg=capped, opus_left=0)
+        self.assertEqual(r["hold"]["reason"], "Opus cap 3/3 reached (last 5 hours)")
+        self.assertNotIn("hold", rt.route("review", ["src/auth.js"], session="sonnet", cfg=plain(), opus_left=0),
+                         "no cap set")
+        self.assertNotIn("hold", rt.route("review", ["src/auth.js"], session="sonnet", cfg=capped, opus_left=1))
+        self.assertNotIn("hold", rt.route("review", ["src/a.js", "tests/a.test.js"], session="sonnet", cfg=capped,
                                           opus_left=0), "a sonnet step is never held")
-        forced = rt.route("review", ["src/auth.js"], "## Objective\nx\nModel: opus\n", session="sonnet", cfg=plain(),
+        forced = rt.route("review", ["src/auth.js"], "## Objective\nx\nModel: opus\n", session="sonnet", cfg=capped,
                           opus_left=0)
         self.assertNotIn("hold", forced)
+        lowered = rt.route("review", ["src/auth.js"], "## Objective\nx\nModel: sonnet\n", session="sonnet",
+                           cfg=capped, opus_left=0)
+        self.assertIn("hold", lowered, "a Model: sonnet that a hard stop overruled is still held, never downgraded")
+
+    def run_gh(self, cmd, *args, fixtures=None, cfg="{}"):
+        fx = ts.write_fixtures(fixtures or {"comments.json": []})
+        path = os.path.join(fx, "cfg.json")
+        with open(path, "w") as f:
+            f.write(cfg)
+        return ts.run(os.path.join(SCRIPTS, "loop_gh.py"), cmd, "--repo", "o/r", "--issue", "9", "--turn", "5",
+                      "--from", "lead", "--fixtures", fx, "--dry-run", "--config", path, *args)
 
     def test_the_hold_command(self):
-        fx = ts.write_fixtures({"comments.json": []})
-        cfg = os.path.join(fx, "cfg.json")
-        with open(cfg, "w") as f:
-            f.write("{}")
-        base = (os.path.join(SCRIPTS, "loop_gh.py"), "hold", "--repo", "o/r", "--issue", "9", "--turn", "5",
-                "--from", "lead", "--fixtures", fx, "--dry-run", "--config", cfg)
-        code, out, _ = ts.run(*base, "--work-type", "review", "--reason", "Opus cap 3/3 reached (UTC day)")
+        code, out, _ = self.run_gh("hold", "--work-type", "review", "--reason", "Opus cap 3/3 reached (last 5 hours)")
         self.assertEqual(code, 0, out)
         calls = out["dry_run_calls"]
         self.assertIn("labels/code-working", calls[1])
         self.assertTrue(calls[2].endswith("labels[]=to-review") and calls[3].endswith("labels[]=needs-leo"))
-        code, out, _ = ts.run(*base, "--work-type", "review", "--reason", "tired")
+        self.assertIn("the cap counts the last 5 hours", out["comment"])
+        code, out, _ = self.run_gh("hold", "--work-type", "review", "--reason", "Opus cap 1/1 reached (last 3 hours)",
+                                   cfg='{"opus_window_hours": 3}')
+        self.assertIn("the cap counts the last 3 hours", out["comment"])
+        code, out, _ = self.run_gh("hold", "--work-type", "review", "--reason", "tired")
         self.assertEqual((code, out["dry_run_calls"]), (1, []))
+
+
+class DefectLinkTests(unittest.TestCase):
+    """R7: the loop, not the owner, links a bug to the merged loop PR that caused it."""
+    MERGED = {"merged_at": "2026-10-15T00:00:00Z", "head": {"ref": "claude/totals"}}
+
+    def defect(self, pr_json, pr="12"):
+        fx = ts.write_fixtures({"comments.json": [], "pr.json": pr_json})
+        path = os.path.join(fx, "cfg.json")
+        with open(path, "w") as f:
+            f.write("{}")
+        return ts.run(os.path.join(SCRIPTS, "loop_gh.py"), "defect", "--repo", "o/r", "--issue", "9", "--turn", "5",
+                      "--pr", pr, "--fixtures", fx, "--dry-run", "--config", path)
+
+    def test_it_posts_galing_sa_and_labels_bug(self):
+        code, out, err = self.defect(self.MERGED)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(out["defect_of"], 12)
+        calls = out["dry_run_calls"]
+        self.assertIn("-X POST repos/o/r/issues/9/comments", calls[0])
+        self.assertTrue(calls[-1].endswith("labels[]=bug"))
+
+    def test_only_a_merged_loop_pr(self):
+        for pr_json in ({"merged_at": None, "head": {"ref": "claude/x"}},
+                        {"merged_at": "2026-10-15T00:00:00Z", "head": {"ref": "someone/else"}}):
+            with self.subTest(pr_json):
+                code, out, _ = self.defect(pr_json)
+                self.assertEqual((code, out["dry_run_calls"]), (1, []))
+
+    def test_the_note_is_not_a_reply_and_passes_the_check(self):
+        note = "<!-- loop:v1 from=lead type=defect pr=12 turn=3 -->\nGaling sa #12 (merged 2026-10-15)."
+        self.assertEqual(cr.check(note, 3, None, None, expect_from="lead")["problems"], [])
+        self.assertTrue(cr.check(note.replace("pr=12 ", ""), 3, None, None, expect_from="lead")["problems"])
+        issue = ts.ap_issue(["awaiting-approval"], [ts.c(ts.plan_reply()["body"]), ts.c(note), ts.c("APPROVED")])
+        self.assertEqual(g.decide(issue, ts.OWNER)["work_type"], "build")
+
+    def test_review_history_and_outcomes_read_the_note(self):
+        note = ts.c("<!-- loop:v1 from=lead type=defect pr=12 turn=3 -->\nGaling sa #12.")
+        bug = dict(ts.ap_item(40, ["bug"]), body=ts.REQUEST, created_at="2026-10-20T00:00:00Z")
+        files = {"issue.json": dict(ts.ap_issue(["to-review"]), comments=None), "comments.json": [],
+                 "bug.json": [bug], "40.comments.json": [note], "pr12.json": self.MERGED,
+                 "pr12.files.json": [{"filename": "src/rules/totals.js"}]}
+        d = ts.write_fixtures(files)
+        path = os.path.join(d, "cfg.json")
+        with open(path, "w") as f:
+            f.write("{}")
+        code, out, err = ts.run(os.path.join(SCRIPTS, "review_history.py"), "--repo", "o/r", "--issue", "9",
+                                "--owner", ts.OWNER, "--fixtures", d, "--config", path)
+        self.assertEqual(code, 0, err)
+        self.assertEqual([x["pr"] for x in out["defects"]], [12])
+        record = dict(ts.ap_item(9, ["done"]), created_at="2026-10-01T00:00:00Z")
+        summary = dict(ts.c("<!-- loop:v1 from=code type=summary phase=2 turn=7 -->\nMerged: yes\nModel: haiku"),
+                       created_at="2026-10-15T00:00:00Z")
+        d = ts.write_fixtures({"issues.json": [record, bug], "40.comments.json": [note],
+                               "9.comments.json": ts.APPROVED_THREAD + [ts.result_reply(4, pr=12), ts.verdict_reply(5, pr=12),
+                                                                        summary]})
+        recs = {r["number"]: r for r in outcomes.collect("o/r", ts.OWNER, d, cfg=plain())["issues"]}
+        self.assertTrue(recs[9]["defect_after"], "outcomes reads the loop's note on the bug issue")
+        loaded = dict(bug, comments=[note])
+        self.assertEqual(outcomes.defect_notes(loaded, ts.OWNER), [(12, "2026-10-20T00:00:00Z")])
+        self.assertEqual(outcomes.defect_notes(dict(loaded, labels=[]), ts.OWNER), [], "only on a bug issue")
 
 
 class HistoryScriptTests(unittest.TestCase):
@@ -449,7 +549,7 @@ class OutcomesAndImproveTests(unittest.TestCase):
     def test_the_new_fields(self):
         summary = dict(ts.c("<!-- loop:v1 from=code type=summary phase=2 turn=7 -->\nMerged: yes\nModel: haiku"),
                        created_at="2026-10-10T00:00:00Z")
-        hold = ts.c("<!-- loop:v1 from=lead type=hold turn=3 -->\nOn hold: Opus cap 3/3 reached (UTC day).")
+        hold = ts.c("<!-- loop:v1 from=lead type=hold turn=3 -->\nOn hold: Opus cap 3/3 reached (last 5 hours).")
         thread = ts.APPROVED_THREAD + [hold, ts.result_reply(4), low_verdict(5),
                                        low_verdict(6, recheck=True), summary]
         r = self.record(thread, files=["src/ui/a.js", "tests/a.test.js"], defects=[(6, "2026-10-20T00:00:00Z")])

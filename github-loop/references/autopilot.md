@@ -6,7 +6,7 @@ The approved plan authorizes everything in it, including the merge, and nothing 
 
 ## Every run
 
-0. **Housekeeping first (SKILL.md, "Every run", steps 2 and 3).** Reopen each `reopen` entry, then run triage again. Park each `needs_leo`, `stale` and `stalled` entry (`--from code` for a stalled plan or review: that is the Lead's work nobody picked up). Hold each `hold` entry (the daily Opus cap): `python scripts/loop_gh.py hold --repo <o>/<r> --issue <N> --turn <next_turn> --work-type <work_type> --from code --reason "<reason>"`; it runs again by itself after 00:00 UTC, never on a weaker model. If that was all there was and `work` is empty, say what you did in one line and stop.
+0. **Housekeeping first (SKILL.md, "Every run", steps 2 and 3).** Reopen each `reopen` entry, then run triage again. Park each `needs_leo`, `stale` and `stalled` entry (`--from code` for a stalled plan or review: that is the Lead's work nobody picked up). Hold each `hold` entry (the Opus cap, only when one is set): `python scripts/loop_gh.py hold --repo <o>/<r> --issue <N> --turn <next_turn> --work-type <work_type> --from code --reason "<reason>"`; it runs again by itself when a slot frees up, never on a weaker model. If that was all there was and `work` is empty, say what you did in one line and stop.
 1. **Repo identity gate.** The repo and project folder must match the request. If they do not, run `park --phase 2` with the reason, and stop before any change.
 2. **Claim:** `python scripts/loop_gh.py claim --repo <o>/<r> --issue <N>`. Exit code 3 → stop.
 3. **Read only:** the plan file (it is the spec), the issue, the project's `CLAUDE.md` and the files the plan names. For a fix, also read the latest verdict.
