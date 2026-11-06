@@ -10,7 +10,12 @@ hosting, database, browser tests) that this script cannot see.
 
 What it cannot see is reported as UNVERIFIED, never as READY: classic branch protection
 (the session token cannot read it), GitHub Pages (the proxy blocks that API), and anything
-outside GitHub. --create-labels creates missing loop labels (a safe, authorized setup step).
+outside GitHub. When GitHub answers the protection read with a 404 (no protection) or a 403 that
+asks to upgrade the plan (a private repository on a free plan), the row says plainly that there is
+no branch protection and that `loop_gh.py merge` is the only gate. The settings shape three rows:
+the open-PR row uses `branch_prefix`, a "Merge gate" row shows `merge_phrase` when one is set, and
+with `deploy: "off"` the Pages row is NOT REQUIRED. --create-labels creates missing loop labels (a
+safe, authorized setup step). Fixtures: `<name>.error` holds the error text of a refused read.
 Exit 0 always unless the repository itself cannot be read (exit 2).
 """
 import argparse
@@ -26,10 +31,25 @@ LABELS = {"to-code": "0E8A16", "code-working": "FBCA04", "awaiting-approval": "5
           "to-review": "1D76DB", "reviewed": "0052CC", "needs-leo": "D93F0B", "done": "6E7781"}
 
 
+NO_PROTECTION = ("No branch protection (private repo on a free plan). `loop_gh.py merge` is the only gate. Do not "
+                 "merge from the GitHub page, except the owner's own Merge tap after the gate stopped at exit 8 or 9 "
+                 "with every other gate green.")
+
+
+def no_protection(error):
+    """True when a refused protection read means there is no protection: a 404, or the 403 that asks to upgrade."""
+    low = str(error).lower()
+    return "404" in low or "not protected" in low or ("403" in low and "upgrade" in low)
+
+
 def get(path, fixtures, name):
-    """(ok, data_or_error). Fixtures: a missing file means the API refused (403)."""
+    """(ok, data_or_error). Fixtures: `<name>.error` holds a refused read's message; a missing file means the
+    API refused (403)."""
     if fixtures:
         full = os.path.join(fixtures, name)
+        if os.path.exists(full + ".error"):
+            with open(full + ".error", encoding="utf-8") as f:
+                return False, f.read().strip()[:160]
         if not os.path.exists(full):
             return False, "403 (fixture missing)"
         with open(full, encoding="utf-8") as f:
@@ -48,7 +68,8 @@ def row(item, status, evidence, impact="", who="", blocks=""):
     return {"item": item, "status": status, "evidence": evidence, "impact": impact, "who": who, "blocks": blocks}
 
 
-def audit(repo, owner, fixtures=None, create_labels=False):
+def audit(repo, owner, fixtures=None, create_labels=False, cfg=None):
+    settings = cfg or loop_config.defaults()
     ok, info = get(f"repos/{repo}", fixtures, "repo.json")
     if not ok:
         return None, f"cannot read {repo}: {info}"
@@ -107,8 +128,12 @@ def audit(repo, owner, fixtures=None, create_labels=False):
         checks = (prot.get("required_status_checks") or {}).get("contexts", [])
         rows.append(row(f"Branch protection on {base}", "READY", f"{prr} required approval(s); required checks: "
                         f"{', '.join(checks) or 'none'}"))
+    elif no_protection(prot):
+        rows.append(row(f"Branch protection on {base}", "NOT REQUIRED", NO_PROTECTION,
+                        "nothing on GitHub stops a merge from the page, so the loop's checks run only through "
+                        "`loop_gh.py merge`", "everyone: merge through the loop", "merge"))
     else:
-        rows.append(row(f"Branch protection on {base}", "UNVERIFIED", "the session token cannot read it (403)",
+        rows.append(row(f"Branch protection on {base}", "UNVERIFIED", f"the session token cannot read it ({prot})",
                         "an unseen rule may still refuse a merge; the merge script reports it", "the owner checks Settings → "
                         "Branches", "merge"))
     rows.append(row("Formal GitHub approval by the Lead",
@@ -131,13 +156,25 @@ def audit(repo, owner, fixtures=None, create_labels=False):
     rows.append(row("CODEOWNERS", "UNVERIFIED" if ok else "NOT REQUIRED", "present: code owner reviews may be "
                     "required" if ok else "none found"))
 
+    phrase = settings.get("merge_phrase")
+    if phrase:
+        rows.append(row("Merge gate", "READY", f"`loop_gh.py merge` also waits for the owner's merge phrase: "
+                        f"`{phrase.replace('{n}', '<PR number>')}` on the PR or the issue, after the head commit "
+                        "(exit 10 until then)", "a MERGE quote in a chat does not replace the phrase", "the owner",
+                        "merge"))
+    prefixes = loop_config.prefixes(settings)
     ok, prs = get(f"repos/{repo}/pulls?state=open&per_page=100", fixtures, "pulls.json")
     if ok:
-        others = [f"#{p['number']} {p['head']['ref']}" for p in prs if not p["head"]["ref"].startswith("claude/")]
+        others = [f"#{p['number']} {p['head']['ref']}" for p in prs if not p["head"]["ref"].startswith(prefixes)]
         rows.append(row("Open pull requests", "READY", f"{len(prs)} open" + (f"; not from the loop: "
                         f"{', '.join(others)}" if others else ""), "check for overlapping files before building"))
-    rows.append(row("GitHub Pages / hosting", "UNVERIFIED", "the session proxy blocks the Pages API",
-                    "deploys need hosting enabled once", "the owner (Settings → Pages) when the plan deploys", "deployment"))
+    if settings.get("deploy") == "off":
+        rows.append(row("GitHub Pages / hosting", "NOT REQUIRED", "deploy: off; the owner deploys by hand",
+                        "summaries say `Deployed: no (deploy: off, manual step for the owner)`", "the owner", ""))
+    else:
+        rows.append(row("GitHub Pages / hosting", "UNVERIFIED", "the session proxy blocks the Pages API",
+                        "deploys need hosting enabled once", "the owner (Settings → Pages) when the plan deploys",
+                        "deployment"))
     return rows, None
 
 
@@ -158,12 +195,13 @@ def main():
     ap.add_argument("--fixtures", default=None)
     a = ap.parse_args()
     try:
-        owner = loop_config.resolve_owner(a.repo, a.owner, loop_config.load(a.config), a.fixtures)
+        cfg = loop_config.load(a.config)
+        owner = loop_config.resolve_owner(a.repo, a.owner, cfg, a.fixtures)
     except (ApiError, ValueError) as e:
         json.dump({"error": str(e)}, sys.stdout)
         print()
         sys.exit(2)
-    rows, err = audit(a.repo, owner, a.fixtures, a.create_labels)
+    rows, err = audit(a.repo, owner, a.fixtures, a.create_labels, cfg)
     if err:
         json.dump({"error": err}, sys.stdout)
         print()

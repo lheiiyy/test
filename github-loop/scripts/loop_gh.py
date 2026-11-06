@@ -17,7 +17,6 @@ Either role:
     loop_gh.py hold    --repo o/r --issue N --turn T --work-type W --reason "Opus cap 3/3 reached (last 5 hours)"
                        [--from code|lead]
     loop_gh.py defect  --repo o/r --issue N --turn T --pr P [--from lead|code]
-                       [--from code|lead]
 
 claim             adds code-working (the claim label for either role) and removes the waiting
                   labels that are present. Refuses (exit 3) if code-working is already there.
@@ -39,11 +38,16 @@ merge             merges ONLY when (1) the owner approved the latest plan and no
                   check run or commit status on that head is failing or pending, and at least one
                   exists when the plan says `CI required: yes` or --require-checks is given
                   (exit 6), (4) the PR is open, not a draft, from this repository (never a fork),
-                  on a claude/ branch, against the base, cleanly mergeable, and its whole file
-                  list was read (exit 5), (5) every changed file is inside the plan's
-                  `Files in scope:` (exit 9), and (6) the change is not high risk (exit 8): a
+                  on a branch_prefix branch (claude/ by default; a list accepts any of them),
+                  against the base, cleanly mergeable, its whole file list was read, and, when
+                  commit_ref_pattern is set, every commit message matches it, merge commits
+                  aside (exit 5), (5) when
+                  merge_phrase is set, the owner commented the phrase (for example `OK i-merge
+                  #<PR>`) on the PR or the issue after the head commit (exit 10; a MERGE quote
+                  does not clear it), (6) every changed file is inside the plan's
+                  `Files in scope:` (exit 9), and (7) the change is not high risk (exit 8): a
                   sensitive file, the skill itself, or `Risk: high` in the plan. A PR that fails
-                  (5) or (6) is merged by the owner: a Merge tap on GitHub, or --owner-merge-quote
+                  (6) or (7) is merged by the owner: a Merge tap on GitHub, or --owner-merge-quote
                   with the owner's own words from a chat session, starting with MERGE (recorded in
                   the merge commit message). The head SHA is pinned, so nothing pushed later
                   slips in.
@@ -51,7 +55,8 @@ verify            after a merge: the PR is merged, the merge commit is on the ba
                   the check runs on the merge commit are reported (exit 7 if not merged or
                   not on the base).
 finish            checks that the PR is merged (--pr), or that the issue says `No PR: yes`
-                  (exit 7), and that a relayed approval's quote is in the summary (exit 1); then
+                  (exit 7), that a relayed approval's quote is in the summary (exit 1), and with
+                  `deploy: "off"` that the Deployed line says no (exit 1); then
                   posts a type=summary phase=2 reply with the five report lines, adds done and
                   closes the issue as completed.
 park              posts a short question; labels needs-leo. The owner answers with CONTINUE: or
@@ -59,12 +64,15 @@ park              posts a short question; labels needs-leo. The owner answers wi
 hold              for an opus step over the Opus cap (triage's `hold` list, or route.py's `hold`):
                   posts a type=hold note, labels needs-leo and keeps (or puts back) the label the
                   step starts from, so the same step runs by itself once a slot frees up.
+                  The note is not a reply, so a waiting APPROVED or REVISE: still counts. It is
+                  never a reason to run the step on a weaker model. The same hold waits for the
+                  owner's merge phrase (exit 10): the reason then starts with "Waiting for the
+                  owner's merge phrase", and the next run merges once the phrase is there. A
+                  hold whose reason is already the newest note is not posted again.
 defect            for a bug request caused by a merged loop PR: checks that PR P is merged from a
                   loop branch, posts `Galing sa #P` as a type=defect note and labels the issue
                   `bug`, so review_history.py and outcomes.py count it. The loop does this, not
                   the owner. The note is not a reply.
-                  The note is not a reply, so a waiting APPROVED or REVISE: still counts. It is
-                  never a reason to run the step on a weaker model.
 reopen            reopens an issue that the owner closed by tapping "Close with comment" together
                   with APPROVED, REVISE: or CONTINUE: (triage lists it under `reopen`). Refuses an
                   issue that is `done` or was closed as "not planned". Posts nothing.
@@ -75,11 +83,12 @@ brought up to date. No command can add to-code. --session <model> makes the Mode
 model this task runs on. --dry-run prints the planned writes without sending them (reads still
 happen, except the duplicate-post check when no --fixtures are given; --fixtures DIR replaces
 the reads with issue.json, comments.json, pr.json, files.json, checks.json, status.json,
-compare.json and repo.json for offline tests).
+compare.json, repo.json, commits.json and pr_comments.json for offline tests).
 The owner is --owner, else "owner" in .github/github-loop.json, else the user who owns the repo.
 Exit codes: 0 ok, 1 reply failed validation, 2 GitHub call failed, 3 already claimed,
 4 not approved, 5 PR not mergeable, 6 checks not green, 7 not merged or no PR, 8 high risk:
-the owner merges, 9 a changed file outside the plan's scope: the owner decides.
+the owner merges, 9 a changed file outside the plan's scope: the owner decides, 10 waiting for
+the owner's merge phrase (only when merge_phrase is set).
 """
 import argparse
 import datetime
@@ -96,7 +105,7 @@ import config as loop_config  # noqa: E402
 from check_plan import changed_files_from_git, check as check_plan  # noqa: E402
 from check_reply import check  # noqa: E402
 from ghapi import ApiError, call, from_fixture, get_all, get_json  # noqa: E402
-from loop_guard import (approval_status, first_header, plan_facts, review_status,  # noqa: E402
+from loop_guard import (approval_status, first_header, is_owner, plan_facts, review_status,  # noqa: E402
                         set_owner_associations)
 from rules import outside_scope, risk_tier, scope_problems  # noqa: E402
 
@@ -243,7 +252,7 @@ def plan_file_problems(a):
         except RuntimeError as e:
             return [str(e)]
         plan_rel = os.path.relpath(os.path.abspath(a.plan_file), top)
-    return [f"plan file: {p}" for p in check_plan(text, plan_rel, changed)["problems"]]
+    return [f"plan file: {p}" for p in check_plan(text, plan_rel, changed, getattr(a, "cfg", None))["problems"]]
 
 
 def cmd_post_plan(a, plan):
@@ -329,6 +338,11 @@ def cmd_finish(a, plan):
         if quote and quote not in " ".join(report["text"].split()):
             return 1, {"ok": False, "problems": [f"the approval was relayed from a chat: add a line `Approval: relayed "
                                                  f"from chat, “{quote}”` to the summary"]}
+    if (getattr(a, "cfg", None) or {}).get("deploy") == "off":
+        deployed = re.search(r"(?im)^[ \t>*-]*\**deployed\**[ \t]*:[ \t]*\**[ \t]*(.*)$", report["text"])
+        if not deployed or not deployed.group(1).lower().startswith("no"):
+            return 1, {"ok": False, "problems": ["deploy is off in this repository's settings: write `Deployed: no "
+                                                 "(deploy: off, manual step for the owner)`"]}
     out = deliver(a, plan, report, "done", ["code-working", "awaiting-approval", "needs-leo", "to-review",
                                             "reviewed"])
     gh(["-X", "PATCH", f"repos/{a.repo}/issues/{a.issue}", "-f", "state=closed", "-f", "state_reason=completed"],
@@ -365,6 +379,24 @@ def cmd_park(a, plan):
     return 0, {"ok": True, "parked": a.issue, "comment": body, "already_posted": not posted}
 
 
+MERGE_PHRASE_HOLD = "Waiting for the owner's merge phrase"
+
+
+def latest_hold_text(a):
+    """The first sentence of the newest loop note when that note is a hold, else None."""
+    if a.dry_run and not a.fixtures:
+        return None
+    last = None
+    for c in read_list(f"repos/{a.repo}/issues/{a.issue}/comments", a.fixtures, "comments.json", default=[]):
+        h = first_header(c.get("body") or "") if is_owner(c, a.owner) else None
+        if h and h.get("from") in ("code", "lead"):
+            last = (h, c.get("body") or "")
+    if not last or last[0].get("type") != "hold":
+        return None
+    lines = [l for l in last[1].splitlines()[1:] if l.strip()]
+    return (lines[0].split(". ", 1)[0] + ".") if lines else None
+
+
 # The label each step starts from, so a hold can put it back after a claim removed it.
 WORK_LABEL = {"plan": "to-code", "revise": "awaiting-approval", "build": "awaiting-approval", "review": "to-review",
               "review-recheck": "reviewed", "fix": "reviewed", "merge": "reviewed", "continue": None}
@@ -373,13 +405,25 @@ WORK_LABEL = {"plan": "to-code", "revise": "awaiting-approval", "build": "awaiti
 def cmd_hold(a, plan):
     reason = " ".join(a.reason.split())
     hours = (getattr(a, "cfg", None) or {}).get("opus_window_hours") or 5
-    if not reason.startswith("Opus cap "):
-        return 1, {"ok": False, "problems": ["a hold is only for the Opus cap: pass the reason triage or "
-                                             "route.py printed (\"Opus cap N/N reached (last H hours)\")"]}
-    body = (f"<!-- loop:v1 from={a.sender} type=hold turn={a.turn} -->\n"
-            f"On hold: {reason}. The {a.work_type} needs opus and is never run on a weaker model. It runs again by "
-            f"itself once a slot frees up (the cap counts the last {hours} hours). To run it sooner, add "
-            f"`Model: opus` to the request.\n")
+    if reason.startswith("Opus cap "):
+        text = (f"On hold: {reason}. The {a.work_type} needs opus and is never run on a weaker model. It runs again "
+                f"by itself once a slot frees up (the cap counts the last {hours} hours). To run it sooner, add "
+                f"`Model: opus` to the request.")
+    elif reason.startswith(MERGE_PHRASE_HOLD) and a.work_type == "merge":
+        text = (f"On hold: {reason}. Every other merge gate is green. Comment the phrase on the PR or here, "
+                "exactly as written, and the next run merges.")
+    else:
+        return 1, {"ok": False, "problems": ["a hold is only for the Opus cap or the owner's merge phrase: pass the "
+                                             "reason triage, route.py or merge printed (\"Opus cap N/N reached (last "
+                                             f"H hours)\", or \"{MERGE_PHRASE_HOLD}: <phrase>\" with --work-type "
+                                             "merge)"]}
+    if latest_hold_text(a) == f"On hold: {reason}.":
+        for label in (WORK_LABEL.get(a.work_type), "needs-leo"):
+            if label:
+                add_label(a.repo, a.issue, label, a.dry_run, plan)
+        remove_labels(a.repo, a.issue, ["code-working"], a.dry_run, plan)
+        return 0, {"ok": True, "held": a.issue, "already_posted": True}
+    body = f"<!-- loop:v1 from={a.sender} type=hold turn={a.turn} -->\n{text}\n"
     report = check(body, a.turn, ["needs-leo"], ["code-working"], expect_from=a.sender)
     if not report["ok"]:
         return 1, report
@@ -466,8 +510,26 @@ def cmd_merge(a, plan):
                         f"state={pr.get('mergeable_state')})")
     if "changed_files" in pr and pr["changed_files"] != len(paths):
         problems.append(f"read {len(paths)} of {pr['changed_files']} changed files, so the risk check is incomplete")
+    cfg = getattr(a, "cfg", None) or {}
+    ref_pattern, phrase = cfg.get("commit_ref_pattern"), cfg.get("merge_phrase")
+    commits = read_list(f"repos/{a.repo}/pulls/{a.pr}/commits", a.fixtures, "commits.json",
+                        default=[]) if (ref_pattern or phrase) else []
+    if ref_pattern:
+        bad_refs = [f"{c.get('sha', '')[:7]} \"{((c.get('commit') or {}).get('message') or '').splitlines()[0][:60]}\""
+                    for c in commits if len(c.get("parents") or []) < 2  # a merge of the base is not a task commit
+                    and not re.search(ref_pattern, (c.get("commit") or {}).get("message") or "", re.MULTILINE)]
+        if bad_refs:
+            problems.append(f"commit messages without the commit reference `{ref_pattern}`: " + ", ".join(bad_refs))
     if problems:
         return 5, {"ok": False, "problem": "not merging: " + "; ".join(problems)}
+    if phrase:
+        wanted = phrase.replace("{n}", str(a.pr))
+        if not merge_phrase_given(a, issue, wanted, commits, head.get("sha")):
+            return 10, {"ok": False, "waiting_for": wanted,
+                        "problem": f"waiting for the owner's merge phrase: comment `{wanted}` on the PR. Every earlier "
+                                   "gate is green. Hold the issue (`loop_gh.py hold --work-type merge --reason "
+                                   f"\"Waiting for the owner's merge phrase: {wanted}\"`); a MERGE quote in a chat does "
+                                   "not replace the phrase"}
 
     scope = facts["scope"]
     outside = scope_problems(scope) or outside_scope(paths, scope)
@@ -500,6 +562,25 @@ def cmd_merge(a, plan):
                "merge_sha": result.get("sha"), "head_sha": head["sha"]}
 
 
+def merge_phrase_given(a, issue, wanted, commits, head_sha):
+    """True when the owner commented exactly `wanted` on the PR or on the issue after the head commit."""
+    head = next((c for c in commits if c.get("sha") == head_sha), None)
+    when = ((head or {}).get("commit") or {}).get("committer", {}).get("date")
+    if not when:
+        return False  # the head commit's time is unknown, so no comment can be shown to be newer
+    head_time = datetime.datetime.fromisoformat(str(when).replace("Z", "+00:00"))
+    pr_comments = read_list(f"repos/{a.repo}/issues/{a.pr}/comments", a.fixtures, "pr_comments.json", default=[])
+    for c in list(issue.get("comments") or []) + list(pr_comments):
+        if not is_owner(c, a.owner) or (c.get("body") or "").strip() != wanted:
+            continue
+        try:
+            if datetime.datetime.fromisoformat(str(c.get("created_at")).replace("Z", "+00:00")) > head_time:
+                return True
+        except ValueError:
+            continue
+    return False
+
+
 def cmd_verify(a, plan):
     pr = read_json(f"repos/{a.repo}/pulls/{a.pr}", a.fixtures, "pr.json")
     sha, base = pr.get("merge_commit_sha"), (pr.get("base") or {}).get("ref", "main")
@@ -520,7 +601,7 @@ COMMANDS = {"claim": cmd_claim, "park": cmd_park, "hold": cmd_hold, "defect": cm
             "post-plan": cmd_post_plan, "ready-for-review": cmd_ready_for_review, "verdict": cmd_verdict,
             "relay-approval": cmd_relay_approval, "merge": cmd_merge, "verify": cmd_verify,
             "finish": cmd_finish, "reopen": cmd_reopen}
-NEEDS_OWNER = {"merge", "finish"}
+NEEDS_OWNER = {"merge", "finish", "hold"}  # hold reads the newest owner-account note
 
 
 def parser():
