@@ -2,7 +2,11 @@
 
 Each adopted change is its own PR with one line here. After its PR is merged, tag the merge commit `github-loop-<date>` (for example `github-loop-2026-10-29`), so the runbook can roll back to it.
 
-## 2026-11-06 (newest): review routing v2 (PR-B)
+## 2026-11-06 (newest): process fit (PR-C)
+
+- Plans can be lite (`plan_sections: "lite"`: Goal, Tasks, Tests, Merge plan) or a named list, live under `plan_dir`, and show the `commit_ref_pattern`; the merge gate checks every commit message against it (merge commits aside) and accepts a list of branch prefixes. With `merge_phrase` set, the gate waits with the new exit 10 until the owner comments the phrase (for example `OK i-merge #<PR>`) after the head commit; a `MERGE` quote does not replace it, and `loop_gh.py hold --work-type merge` keeps the issue waiting without a park. `deploy: "off"` skips the release step, and `finish` needs `Deployed: no (deploy: off, manual step for the owner)`. readiness.py says plainly when there is no branch protection, uses the configured prefixes, shows the merge phrase and marks Pages NOT REQUIRED with deploy off. New `references/smoke-test.md` (6 parts).
+
+## 2026-11-06: review routing v2 (PR-B)
 
 - A review goes to opus on a hard stop (sensitive or `risk_paths` file, goal risk words, `Risk: high`, a weakened test, the third round, an authority document with no code) or on a score at or above `threshold`; otherwise sonnet. The score counts feature areas, source files, diff lines, whole-word risk words in changed source lines, a public contract change, an authority document, no test change, an earlier CHANGES REQUESTED and a post-merge defect in the same area (`scripts/review_history.py`). The verdict's Model line ends with `Why:`; a sonnet verdict adds `Confidence:` and `Unchecked:`, and a low-confidence approval gets one opus `review-recheck` before the merge. An optional Opus cap (off by default; `max_opus_per_window` steps in the last `opus_window_hours`, default 5) holds opus steps with `loop_gh.py hold` (needs-leo; they resume when a slot frees up and are never downgraded). The owner's review `Model: haiku` is lifted to sonnet, and a lower `Model:` line never lowers a review hard stop. The loop links a bug to the merged loop PR that caused it with `loop_gh.py defect` (`Galing sa #N`, label `bug`). outcomes.py gains the routing fields; improve.py gains four routing proposals and `--open-issue`.
 
