@@ -146,3 +146,18 @@ Leo's decisions on the review checklist: R1 hold, with a 5-hour reset instead of
 | 42 hand-made mutations (the 32 before, updated, plus: the window ignoring its hours, route holding without a cap, the owner lowering a hard stop, a forced sonnet escaping the cap, the cap on by default, the hold note ignoring the window, a defect note counted as a reply, a defect linked to any PR, review_history or outcomes ignoring defect notes, defect notes on any issue) | 40 caught on the first run; the 2 survivors led to 2 new tests, and then all 42 were caught |
 | `flake8 --select F` on scripts and tests | 0 |
 
+## PR-C: process fit (2026-11-06)
+
+Branch `claude/skill-fix-c`, based on `main` at `faaa065` (PR-B merged). Plan: `docs/plan-skill-fixes.md`, section PR-C, with the section 6 decisions.
+
+| Command | Result |
+|---|---|
+| `python3 -B evals/test_scripts.py` | 213 run, 213 OK (no test changed) |
+| `python3 -B evals/test_process_fit.py` (new) | 27 run, 27 OK: lite plan passes (and the TDMS-style lite fixture with plan_dir and a commit ref), lite without a Merge plan fails, the Merge plan lines, tier and AWAITING APPROVAL always stay, the heavy default is unchanged, a section list gets the Merge plan, plan_dir, the plan's commit ref, check_plan.py and post-plan read the settings; merge gate: nothing changes without the new keys, a missing commit ref fails and names the commit (a base merge commit is skipped), prefix lists, exit 10 and its message, high risk waits for the phrase first and then stops at exit 8, a stranger's, older, wrong-number, extra-word or lowercase phrase is ignored, the phrase on the PR or the issue passes, an unknown head time never passes, a MERGE quote does not clear exit 10, exit 10 is documented; the merge-phrase hold keeps `reviewed`, is not posted twice and is only for a merge; `deploy: off` report line; readiness wording for a free-plan 403 and a 404 (and UNVERIFIED for other 403s), `--markdown`, prefixes, the Merge gate row, the Pages row; smoke-test.md has its 6 parts and events.md links it |
+| `test_routing_v2.py`, `test_config_rules.py` | 43 OK (the hold test now passes `--owner`, because hold reads the newest owner-account note); 19 OK |
+| `test_fire.py`, `test_route_event.py`, `test_workflow.py` | 10 OK; 30 OK; 9 OK (1 skipped) |
+| 24 hand-made mutations (lite ignored, topic checks on custom sections, no Merge plan for a list, a lite plan without a tier, plan_dir ignored, the plan's commit ref ignored, post-plan ignoring the settings, the gate ignoring commit refs or requiring them on merge commits, no exit 10, an older, stranger's or loose phrase counting, a MERGE quote clearing exit 10, an unknown head time passing, the phrase on the issue ignored, a hold posted twice or for any step, deploy off not enforced, no plain protection wording or any 403 counting as none, readiness ignoring prefixes, no Merge gate row, the Pages row ignoring deploy off) | 24 of 24 caught |
+| `flake8 --select F` on scripts and tests | 0 |
+| `npm test` in `trip-monitoring/` (not edited) | 38 run, 38 pass; regenerated screenshots restored before commit |
+| Not run | Anything against the live GitHub API: the free-plan 403 text, `pulls/N/commits`, PR comments. The smoke test (`references/smoke-test.md`) covers the live run. |
+

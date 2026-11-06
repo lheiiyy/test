@@ -430,8 +430,9 @@ class CapTests(unittest.TestCase):
         path = os.path.join(fx, "cfg.json")
         with open(path, "w") as f:
             f.write(cfg)
+        owner = ("--owner", ts.OWNER) if cmd == "hold" else ()  # PR-C: hold reads the newest owner-account note
         return ts.run(os.path.join(SCRIPTS, "loop_gh.py"), cmd, "--repo", "o/r", "--issue", "9", "--turn", "5",
-                      "--from", "lead", "--fixtures", fx, "--dry-run", "--config", path, *args)
+                      "--from", "lead", "--fixtures", fx, "--dry-run", "--config", path, *owner, *args)
 
     def test_the_hold_command(self):
         code, out, _ = self.run_gh("hold", "--work-type", "review", "--reason", "Opus cap 3/3 reached (last 5 hours)")
