@@ -21,7 +21,7 @@ python3 scripts/init_repo.py --repo <o>/<r> --owner <owner> --owner-name <name> 
 
 It writes `.github/github-loop.json` (the settings), the Autopilot issue form, the event workflow `.github/workflows/loop-fire.yml` and a starter `CLAUDE.md`, copies this skill to `.claude/skills/github-loop/`, creates the labels and prints the Code, Lead and Lead Deep task prompts. A file that already exists is kept (`--force` replaces it), and `--dry-run` shows the plan. Put the new files in a pull request; the skill folder and `.github/` are high risk, so you tap Merge.
 
-- **Settings** (`.github/github-loop.json`, all optional): `owner`, `owner_name`, `language`, `base`, `branch_prefix`, `owner_associations`, `improve` (`scripts/config.py`). An organization repo must set `owner`, and the workflow's `if:` line needs the owner's login (`references/events.md`).
+- **Settings** (`.github/github-loop.json`, all optional): `owner`, `owner_name`, `language`, `base`, `branch_prefix`, `owner_associations`, `improve`, plus the risk, routing and process keys in **Settings reference** below (`scripts/config.py`). An organization repo must set `owner`, and the workflow's `if:` line needs the owner's login (`references/events.md`).
 - **Labels** (`readiness.py --create-labels` makes them): `to-code` 0E8A16, `code-working` FBCA04, `awaiting-approval` 5319E7, `to-review` 1D76DB, `reviewed` 0052CC, `needs-leo` D93F0B (this name stays in every repo), `done` 6E7781.
 
 **You should see:** a merged PR with those files and the seven labels under Issues, Labels.
@@ -81,6 +81,42 @@ Each plan states one of these:
 
 - **GitHub Pages:** enable it once in Settings, Pages. The session proxy blocks the Pages API.
 - **Apps Script:** deploys stay manual. clasp is not available in cloud runs, and credentials are never committed (`references/experts/appsscript.md`).
+
+## Settings reference
+
+Every key is optional; without it the loop behaves as before. A wrong type or an out-of-range value stops every script with `<key>: <why>`, and an unknown key stops them with the closest known key ("did you mean `risk_paths`?"). `null` means "use the default". The path lists only **add** to the built-in rules: no setting can switch a built-in sensitive name, test pattern or hard rule off.
+
+| Key | Type | Default | Allowed | Used by |
+|---|---|---|---|---|
+| `owner` | string | the repo's user | a GitHub login | every script |
+| `owner_name` | string | the login | any text | relayed approvals, messages |
+| `language` | string | `English` | any text | final messages |
+| `base` | string | `main` | a branch | merge gate |
+| `branch_prefix` | string or list | `claude/` | non-empty prefixes | merge gate (a list accepts any of them) |
+| `owner_associations` | list | `["OWNER"]` | author_association values | owner checks |
+| `improve` | boolean | `true` | `true`, `false` | improve.py |
+| `risk_paths` | list of globs | none | not `*`, `**` or `**/*` | risk tier, merge gate, model |
+| `authority_docs` | list of globs | none (CLAUDE.md, AGENTS.md always count) | as above | authority hits |
+| `test_globs` | list of globs | none (built-in test patterns always count) | as above | file kinds |
+| `doc_globs` | list of globs | none (.md, .txt, .rst always count) | as above | file kinds |
+| `feature_roots` | list of folder globs | none (the file's folder) | `*` per level, no `**` | feature areas |
+| `risk_words` | list | none | lowercase single words | review scoring (routing v2) |
+| `points` | object | areas 3, files 3, lines 2, risk_words 3, contract 2, authority 2, no_tests 2, changes_requested 1, defect 2 | these 9 names only, 0-5 each | review scoring (routing v2) |
+| `threshold` | integer | 3 | 2-10 | review scoring (routing v2) |
+| `max_opus_per_day` | integer | 3 | 0-50 | daily Opus cap (routing v2) |
+| `plan_dir` | string | none | a folder | plan check (process fit) |
+| `plan_sections` | `"lite"` or list | the six heavy sections | | plan check (process fit) |
+| `commit_ref_pattern` | regex string | none | must compile | plan check, merge gate (process fit) |
+| `merge_phrase` | string | none | must contain `#{n}` | merge gate (process fit) |
+| `deploy` | string | `auto` | `auto`, `off` | release step (process fit) |
+
+Keys marked routing v2 or process fit are checked now and take effect in those later releases (`docs/plan-skill-fixes.md` in the skill's source repo).
+
+**Glob rules** (one matcher, `rules.glob_match`, for every path list above): case is ignored; paths use `/` and a leading `./` is dropped; `*`, `?` and `[...]` match inside one folder level and never cross `/`; a `**` level matches zero or more whole levels (`src/**/env*` matches `src/env.js` and `src/core/env.js`); a pattern ending in `/**` or `/` matches everything under that folder; any other pattern must match the whole path. `Files in scope:` in a plan keeps its own matching, so approved plans read the same.
+
+**File kinds:** lockfiles (`**/*.lock`, `**/package-lock.json`) and generated files (`**/*.min.js`, `dist/**`, `build/**`) come first, then tests (`**/tests/**`, `**/test/**`, `**/__tests__/**`, `**/evals/**`, `**/*.test.*`, `**/*.spec.*`, `**/test_*.py`, `**/*_test.py`, `**/*_test.go`, plus `test_globs`), then documentation; everything else is source. A big change for model routing counts **source files only** (8 or more), so many tests or docs no longer push a step to opus.
+
+**Example profile:** `references/profiles/tdms.example.json` shows the keys for an Apps Script web app with a repository layer, a platform adapter and rule documents. Its values are examples: check every path against the real repository before copying them into `.github/github-loop.json`.
 
 ## Readiness before a request
 

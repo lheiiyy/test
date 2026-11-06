@@ -2,7 +2,11 @@
 
 Each adopted change is its own PR with one line here. After its PR is merged, tag the merge commit `github-loop-<date>` (for example `github-loop-2026-10-29`), so the runbook can roll back to it.
 
-## 2026-11-06 (newest): source restored to top-level github-loop/
+## 2026-11-06 (newest): settings schema, one glob matcher, source-only counting (PR-A)
+
+- Settings are checked by type and range, an unknown key names the closest one, and new optional keys (`risk_paths`, `authority_docs`, `risk_words`, `feature_roots`, `test_globs`, `doc_globs`, `points`, `threshold`, `max_opus_per_day`, `plan_dir`, `plan_sections`, `commit_ref_pattern`, `merge_phrase`, `deploy`) are accepted; `branch_prefix` may be a list. One glob matcher (`rules.glob_match`) for every path list; `risk_paths` reaches the risk tier, the model pick and the merge gate, and only adds. A big change counts source files only. The top-level `github-loop/` counts as the skill. Example profile: `references/profiles/tdms.example.json`.
+
+## 2026-11-06: source restored to top-level github-loop/
 
 - 2026-11: source restored to top-level github-loop/. It is a byte-for-byte copy of `.claude/skills/github-loop/` plus `evals/` and this file, restored from `8866f95^`. No script changed. Later fixes (plan `docs/plan-skill-fixes.md`, PR-A to PR-C) edit only this folder.
 

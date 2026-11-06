@@ -17,11 +17,13 @@ python3 scripts/pick_model.py --step <plan|revise|build|fix|review|merge|verify|
 | `merge`, `verify` | haiku | never | always: a scripted command and its exit code |
 | `report` | sonnet | never | never: it states results as facts |
 | `plan`, `revise` | sonnet | the goal names sensitive things (login, permissions, schema, payments, credentials), the goal is architecture-heavy (new system, rewrite), 5 or more tasks, or this is the second revision | never: sonnet is the floor |
-| `review` | sonnet | sensitive files changed, 8 or more files, or the third round | never: sonnet is the floor, even for documentation |
+| `review` | sonnet | sensitive files changed, 8 or more source files, or the third round | never: sonnet is the floor, even for documentation |
 | `build` | sonnet | sensitive files **and** a big change | haiku when only `.md`, `.txt` or `.rst` files change |
 | `fix` | sonnet | sensitive files, the third review round, or the **second attempt** at the same failure | haiku for documentation only |
 
-Sensitive files: names containing auth, permission, role, acl, secret, token, credential, password, pin, schema, migration, `.sql`, payment, billing, payroll, security, deploy, `.env`; also `.github/`, `appsscript.json`, `.clasp*` and the skill folder itself (`.claude/skills/`). These rules live in `scripts/rules.py`, shared with route.py and the merge gate. Documentation-only changes are never sensitive, except under `.github/` or the skill folder. A plan's `Risk: high` counts as sensitive too.
+Sensitive files: names containing auth, permission, role, acl, secret, token, credential, password, pin, schema, migration, `.sql`, payment, billing, payroll, security, deploy, `.env`; also `.github/`, `appsscript.json`, `.clasp*` and the skill folder itself (`.claude/skills/`, or its source in a top-level `github-loop/`), plus any `risk_paths` glob in the settings. These rules live in `scripts/rules.py`, shared with route.py and the merge gate. Documentation-only changes are never sensitive, except under `.github/` or the skill folder. A plan's `Risk: high` counts as sensitive too.
+
+A big change counts **source files** only: tests, documentation, lockfiles and generated files do not count (the file kinds in `references/setup.md`).
 
 Only the goal counts for risk words in a request (the Objective section), because the rest of the template holds boilerplate such as "schema changes" and "credentials".
 
@@ -55,7 +57,7 @@ A scheduled run showed no subagent use, so a Sonnet Lead cannot reliably hand a 
 | Task | Triage flags | Takes |
 |---|---|---|
 | Lead (Sonnet, started by events) | `--role lead --max-tier sonnet` | Work whose tier is sonnet or lower. Opus-tier work waits in `deferred`. |
-| Lead Deep (Opus, scheduled every 2 hours; events do not start it) | `--role lead --min-tier opus` | Only opus-tier work: sensitive files or goal words, 8 or more files, an architecture-heavy goal, the third round, the second revision, or Leo's `Model: opus`. |
+| Lead Deep (Opus, scheduled every 2 hours; events do not start it) | `--role lead --min-tier opus` | Only opus-tier work: sensitive files or goal words, 8 or more source files, an architecture-heavy goal, the third round, the second revision, or Leo's `Model: opus`. |
 
 - Each work entry carries `tier` and `tier_reason`, an estimate from the request and the PR's file list (one extra call, review and fix only). The step still runs `pick_model.py` with the real diff, and that answer wins.
 - **No deadlock:** after `--defer-minutes` (default 120) the normal Lead takes deferred work anyway. The entry then has a `tier_note`, and the Model line must say `wanted opus; ran inline`. If Lead Deep does not exist, leave `--max-tier` off.
