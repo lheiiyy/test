@@ -1,7 +1,8 @@
 # Plan: github-loop skill fixes for TDMS (S1-S4, G1-G7)
 
-Status: PLAN ONLY, revision 2 (after the audit verdict FIX). Waiting for "OK A0". Nothing is built on
-this branch.
+Status: PLAN ONLY, revision 3 (rev 2 after the audit verdict FIX; rev 3 after a dry run of the A0
+baseline). Leo gave the go for A0 on 2026-11-06. Nothing is built on this branch; A0 is built on
+`claude/skill-fix-a0`.
 Repo: `lheiiyy/test`. `lheiiyy/TDMS` is not touched.
 Target design: "Review model routing v2 = checklist score", as agreed. This plan does not reopen it.
 
@@ -60,9 +61,13 @@ Each PR from A onward adds one line to `<src>/CHANGELOG.md`.
 - `diff -r .claude/skills/github-loop github-loop` shows only `evals/` and `CHANGELOG.md`.
 - No script changes.
 - The restored suites run against the current scripts. The baseline result (run, OK, failures with
-  names) goes in the PR body as it is. Known risk: `references/events.md` changed by 2 lines after
-  `8866f95^`, so a test that reads it may fail. Any failure is recorded, not fixed, in A0.
-- `npm test` in `trip-monitoring/` passes.
+  names) goes in the PR body as it is. Any failure is recorded, not fixed, in A0.
+- Known failure (from a dry run): `test_scripts.py` `test_skill_frontmatter` fails, because today's
+  `SKILL.md` says `name: "github-loop"` (quoted) and the test looks for the unquoted text. Both are
+  valid YAML, so the test is wrong, not the skill; PR-A fixes the test. The other three suites passed
+  in the dry run. (`references/events.md` changed by only 1 line and no test reads that line.)
+- `npm test` in `trip-monitoring/` passes. It rewrites the screenshots in
+  `trip-monitoring/docs/screens/`, so they are restored with `git checkout` before any commit.
 
 **Risk**: high (it adds a copy of the safety scripts outside `.claude/skills/`; the copy is not active
 until it is installed). Until PR-A lands, the new folder is not yet matched by the skill-path rule. A0
@@ -159,7 +164,8 @@ declares `Risk: high` itself, so the gate still sends it to Leo.
 
 **Acceptance**
 - The A0 baseline does not get worse. The only tests changed on purpose are the ones that encode the old
-  `large` rule; they are listed in the PR.
+  `large` rule, and `test_skill_frontmatter`, which will accept `name:` quoted or unquoted. They are
+  listed in the PR.
 - `readiness.py` and `triage.py` run on fixtures with the TDMS example profile, with no exception.
 
 **Risk**: high. The main danger is a pattern that matches too much or too little; the glob list test pins
@@ -278,7 +284,7 @@ current `pick_model.py`.
 | T1 trip form validation | `src/ui/trip-form.js`, `src/ui/trip-form.html`, `src/services/trips.js`, 3 tests, 2 docs; about 260 lines | `+function validateTrip(trip) {`, `+updateStatus(id, "SUBMITTED")` | 2 areas +1, lines +1; tokens validate, update: 0 hits | **Sonnet**. Why: score 2 (2 feature areas, diff 150-400) | Opus (8 files). With substring matching, `validate` and `update` would hit `date` (+3) |
 | T2 overdue reminder | `src/services/reminders.js`, `src/rules/dates.js`, 4 tests, 2 docs; about 190 lines | `+const overdue = isOverdue(trip.dueDate, now)` | risk words overdue, due, date +3, 2 areas +1, lines +1 | **Opus**. Why: score 5 (date logic: overdue, due, date; 2 areas; diff 150-400) | Opus (8 files) |
 | T3 Props adapter | `src/platform/props.js`, `src/services/settings.js`, 4 tests, 2 docs | `+PropertiesService.getScriptProperties()` | hard stop | **Opus**. Why: hard stop (risk path src/platform/props.js) | Opus (8 files), with `risk_paths` empty |
-| T4 status labels on list screen | `src/ui/trip-list.js`, `src/ui/trip-list.html`, `src/services/trips.js`, 4 tests, 1 doc; about 180 lines | `+// migrate old status names`, `+const label = separateWords(generateLabel(status))` | 2 areas +1, lines +1; tokens migrate, separate, generate: 0 hits | **Sonnet**. Why: score 2 (2 feature areas, diff 150-400) | Opus (9 files). With substring matching, the three words would hit `rate` (+3) |
+| T4 status labels on list screen | `src/ui/trip-list.js`, `src/ui/trip-list.html`, `src/services/trips.js`, 4 tests, 1 doc; about 180 lines | `+// migrate old status names`, `+const label = separateWords(generateLabel(status))` | 2 areas +1, lines +1; tokens migrate, separate, generate: 0 hits | **Sonnet**. Why: score 2 (2 feature areas, diff 150-400) | Opus (8 files). With substring matching, the three words would hit `rate` (+3) |
 
 Opus comes only from real signals (date logic in T2, the Props-adapter hard stop in T3), never from file
 counts or substrings.
@@ -430,7 +436,7 @@ All three are decided by Leo:
 - **Q2:** public contract, detected as written in PR-B (accepted).
 - **Q3:** post-merge defect, detected as written in PR-B (accepted).
 
-No open questions remain. The next step waits for "OK A0".
+No open questions remain. A0 is approved (2026-11-06); A, B and C each still need their own OK.
 
 ## 5. `.github/` and templates
 
