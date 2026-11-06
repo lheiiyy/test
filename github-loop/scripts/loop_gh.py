@@ -14,6 +14,8 @@ Either role:
     loop_gh.py claim   --repo o/r --issue N
     loop_gh.py reopen  --repo o/r --issue N
     loop_gh.py park    --repo o/r --issue N --turn T --reason "..." [--phase 1|2] [--from code|lead]
+    loop_gh.py hold    --repo o/r --issue N --turn T --work-type W --reason "Opus cap 3/3 reached (UTC day)"
+                       [--from code|lead]
 
 claim             adds code-working (the claim label for either role) and removes the waiting
                   labels that are present. Refuses (exit 3) if code-working is already there.
@@ -52,6 +54,11 @@ finish            checks that the PR is merged (--pr), or that the issue says `N
                   closes the issue as completed.
 park              posts a short question; labels needs-leo. The owner answers with CONTINUE: or
                   REVISE:.
+hold              for an opus step over the daily Opus cap (triage's `hold` list, or route.py's
+                  `hold`): posts a type=hold note, labels needs-leo and keeps (or puts back) the
+                  label the step starts from, so the same step runs by itself after 00:00 UTC.
+                  The note is not a reply, so a waiting APPROVED or REVISE: still counts. It is
+                  never a reason to run the step on a weaker model.
 reopen            reopens an issue that the owner closed by tapping "Close with comment" together
                   with APPROVED, REVISE: or CONTINUE: (triage lists it under `reopen`). Refuses an
                   issue that is `done` or was closed as "not planned". Posts nothing.
@@ -352,6 +359,30 @@ def cmd_park(a, plan):
     return 0, {"ok": True, "parked": a.issue, "comment": body, "already_posted": not posted}
 
 
+# The label each step starts from, so a hold can put it back after a claim removed it.
+WORK_LABEL = {"plan": "to-code", "revise": "awaiting-approval", "build": "awaiting-approval", "review": "to-review",
+              "review-recheck": "reviewed", "fix": "reviewed", "merge": "reviewed", "continue": None}
+
+
+def cmd_hold(a, plan):
+    reason = " ".join(a.reason.split())
+    if not reason.startswith("Opus cap "):
+        return 1, {"ok": False, "problems": ["a hold is only for the daily Opus cap: pass the reason triage or "
+                                             "route.py printed (\"Opus cap N/N reached (UTC day)\")"]}
+    body = (f"<!-- loop:v1 from={a.sender} type=hold turn={a.turn} -->\n"
+            f"On hold: {reason}. The {a.work_type} needs opus and is never run on a weaker model. It runs again by "
+            f"itself after 00:00 UTC (08:00 Manila). To run it sooner, add `Model: opus` to the request.\n")
+    report = check(body, a.turn, ["needs-leo"], ["code-working"], expect_from=a.sender)
+    if not report["ok"]:
+        return 1, report
+    posted = post_text(a, body, report["fields"], plan)
+    remove_labels(a.repo, a.issue, ["code-working"], a.dry_run, plan)
+    for label in (WORK_LABEL.get(a.work_type), "needs-leo"):
+        if label:
+            add_label(a.repo, a.issue, label, a.dry_run, plan)
+    return 0, {"ok": True, "held": a.issue, "comment": body, "already_posted": not posted}
+
+
 def checks_on(a, sha):
     runs = read_list(f"repos/{a.repo}/commits/{sha}/check-runs", a.fixtures, "checks.json",
                      default={"check_runs": []}, key="check_runs")
@@ -459,7 +490,7 @@ def cmd_verify(a, plan):
     return (0 if out["ok"] else 7), out
 
 
-COMMANDS = {"claim": cmd_claim, "park": cmd_park, "post-plan": cmd_post_plan,
+COMMANDS = {"claim": cmd_claim, "park": cmd_park, "hold": cmd_hold, "post-plan": cmd_post_plan,
             "ready-for-review": cmd_ready_for_review, "verdict": cmd_verdict,
             "relay-approval": cmd_relay_approval, "merge": cmd_merge, "verify": cmd_verify,
             "finish": cmd_finish, "reopen": cmd_reopen}
@@ -487,9 +518,13 @@ def parser():
             p.add_argument("--pr", type=int, default=None, help="the merged PR (omit only for `No PR: yes` issues)")
         if name in NEEDS_OWNER or name == "relay-approval":
             p.add_argument("--owner", default=None, help="the owner's login (default: config, then the repo owner)")
-        if name in ("park", "post-plan"):
+        if name in ("park", "post-plan", "hold"):
             p.add_argument("--from", dest="sender", choices=("code", "lead"),
                            default="lead" if name == "post-plan" else "code")
+        if name == "hold":
+            p.add_argument("--turn", type=int, required=True)
+            p.add_argument("--reason", required=True, help="the cap reason triage or route.py printed")
+            p.add_argument("--work-type", required=True, choices=sorted(WORK_LABEL))
         if name == "post-plan":
             p.add_argument("--plan-file", default=None, help="the plan file; check_plan.py runs on it before posting")
             p.add_argument("--git-base", default=None, help="also require the plan to be the only changed file")
