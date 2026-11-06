@@ -9,7 +9,15 @@ Prints one JSON object:
   risk, risk_reasons   low | normal | high, from rules.py (the same rules the merge gate uses)
   experts              [{id, note}] from references/experts/registry.json; read only these notes
   gates                every gate that applies. The base gates always apply; routing only adds
-  model                the pick_model.py report for this step (tier, action, model_line)
+  model                the pick_model.py report for this step (tier, action, model_line; for a review
+                       also the score, the hard stop and the Why text)
+  hold                 only when the model is opus, the owner did not force it, and --opus-left (the
+                       work entry's opus_left from triage) is 0: the reason to pass to
+                       `loop_gh.py hold`. Never run the step on a weaker model instead.
+
+    route.py --step review --git-range origin/main...<head> --history history.json --opus-left 2
+reads the diff for the review score from the same range (or --diff FILE) and the earlier
+CHANGES REQUESTED and post-merge defects from review_history.py's output.
 
 Rules, not judgment, set the risk: a sensitive file or the skill itself, risk words in the
 request's Objective, or the plan's declared `Risk:` (--declared-risk) make it high. Nothing can
@@ -27,7 +35,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import config as loop_config  # noqa: E402
-from pick_model import objective_of, paths_from_git, pick  # noqa: E402
+from pick_model import diff_from_git, objective_of, paths_from_git, pick, read_history, read_text  # noqa: E402
 from rules import DOCS, RISK_TEXT, is_docs_only, norm, risk_tier  # noqa: E402
 
 REGISTRY = os.path.join(os.path.dirname(HERE), "references", "experts", "registry.json")
@@ -68,7 +76,7 @@ def matches(expert, step, paths, goal, tier):
 
 
 def route(step, paths=(), text="", declared=None, round_=1, attempt=1, tasks=0, session=None, registry=REGISTRY,
-          cfg=None):
+          cfg=None, diff=None, history=None, opus_left=None):
     if step not in STEPS:
         raise ValueError(f"unknown step {step!r}; use one of {', '.join(STEPS)}")
     paths = norm(paths)
@@ -87,10 +95,15 @@ def route(step, paths=(), text="", declared=None, round_=1, attempt=1, tasks=0, 
         gates += HIGH_GATES
     gates += [EXPERT_GATES[e["id"]] for e in chosen if e["id"] in EXPERT_GATES and EXPERT_GATES[e["id"]] not in gates]
     model = pick(step, paths, text, tasks, attempt, round_, session, declared="high" if tier == "high" else None,
-                 cfg=cfg)
-    return {"step": step, "risk": tier, "risk_reasons": reasons,
-            "experts": [{"id": e["id"], "note": e.get("note")} for e in chosen],
-            "gates": gates, "model": model, "files": len(paths)}
+                 cfg=cfg, diff=diff, history=history)
+    out = {"step": step, "risk": tier, "risk_reasons": reasons,
+           "experts": [{"id": e["id"], "note": e.get("note")} for e in chosen],
+           "gates": gates, "model": model, "files": len(paths)}
+    if model["tier"] == "opus" and not model["forced"] and opus_left is not None and opus_left <= 0:
+        cap = (cfg or {}).get("max_opus_per_day", 3)
+        out["hold"] = {"reason": f"Opus cap {cap}/{cap} reached (UTC day)",
+                       "do": "post `loop_gh.py hold` with this reason; never run the step on a weaker model"}
+    return out
 
 
 def main():
@@ -107,6 +120,9 @@ def main():
     ap.add_argument("--session", default=None, help="model of the running task")
     ap.add_argument("--registry", default=REGISTRY)
     ap.add_argument("--config", default=None, help="settings file (default .github/github-loop.json)")
+    ap.add_argument("--diff", default=None, help="unified diff file for the review score (default: from --git-range)")
+    ap.add_argument("--history", default=None, help="review_history.py output (earlier changes, post-merge defects)")
+    ap.add_argument("--opus-left", type=int, default=None, help="the work entry's opus_left from triage")
     a = ap.parse_args()
     try:
         paths = list(a.paths) + (paths_from_git(a.git_range) if a.git_range else [])
@@ -116,8 +132,10 @@ def main():
         elif a.text:
             with open(a.text, encoding="utf-8") as f:
                 text = f.read()
+        diff = read_text(a.diff) if a.diff else (
+            diff_from_git(a.git_range) if a.git_range and a.step == "review" else None)
         out = route(a.step, paths, text, a.declared_risk, a.round_, a.attempt, a.tasks, a.session, a.registry,
-                    loop_config.load(a.config))
+                    loop_config.load(a.config), diff, read_history(a.history), a.opus_left)
     except (ValueError, OSError) as e:
         json.dump({"ok": False, "error": str(e)}, sys.stdout, indent=2)
         print()
