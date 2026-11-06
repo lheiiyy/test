@@ -26,6 +26,7 @@ Write docs/plan-[FEATURE].md (inside the project folder) with these sections, ea
 5. Merge plan: branch name, merge method, the conditions for merging, the release policy, and three lines of their own: `Risk: low|normal|high`, `CI required: yes|no` and `Files in scope: <folders/ and files>`.
 6. Readiness: READY / NEEDS SETUP / BLOCKED / NOT REQUIRED / UNVERIFIED for every dependency, and one checklist of what I must do by hand.
 End the file with the line "AWAITING APPROVAL". Make no code changes in Phase 1.
+(If this repository's settings say `plan_sections: "lite"`, the plan has four sections instead: Goal, Tasks with the model plan, Tests, and the Merge plan with the same three lines. If they set `plan_dir`, the plan goes in that folder. If they set `commit_ref_pattern`, the Merge plan shows the commit reference format and every commit message follows it.)
 
 ## Phase 2: Build, test, debug, merge (only after I reply "APPROVED")
 The approved plan authorizes everything in it, including the merge.

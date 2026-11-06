@@ -44,6 +44,8 @@ The ordered steps are in `references/setup.md` (step 5). In short:
 
 ## Smoke test (three steps, in this order)
 
+The full smoke test, with the negative test, the model check, the cost log and the pass criteria, is `references/smoke-test.md`; these are its part 1.
+
 1. **Dry run.** Actions, Loop fire, Run workflow, role `lead`, dry run on. The log says `dry run: would fire lead with text 'loop-fire v1 ...'` and fires nothing. This proves the workflow, the router and the script run.
 2. **One real fire.** Run it again with dry run off. A Lead run appears in the scheduled-task list and ends "No new work." This proves the secrets and the trigger. Repeat for `code`.
 3. **A live request.** File a small request with the Autopilot form. The Lead run starts within a minute and posts a plan. Reply `APPROVED` and watch Code start the same way.

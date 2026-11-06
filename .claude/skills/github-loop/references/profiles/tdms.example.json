@@ -1,0 +1,21 @@
+{
+  "branch_prefix": ["feat/", "docs/"],
+  "risk_paths": [
+    "src/repository/**",
+    "src/platform/**",
+    "src/**/env*",
+    "src/**/session*",
+    "src/**/scoring*",
+    "config/settings.json"
+  ],
+  "authority_docs": [
+    "docs/PERMISSIONS.md",
+    "docs/DATA-MODEL.md",
+    "docs/DECISIONS.md",
+    "docs/BUSINESS-RULES.md"
+  ],
+  "risk_words": ["date", "rate", "due", "overdue", "sla", "total"],
+  "feature_roots": ["src/*"],
+  "merge_phrase": "OK i-merge #{n}",
+  "deploy": "off"
+}
