@@ -29,8 +29,10 @@ Who may say what:
 - A sonnet verdict that approves with `Confidence: low` is not final: the Lead gets one
   `review-recheck` (opus, limited to the verdict's `Unchecked:` items) for that head, posted as a
   verdict with `recheck=yes`. The merge waits for it. A head gets at most one recheck.
-- A `type=hold` note (the daily Opus cap) is not a reply: it keeps the workflow labels, adds
-  needs-leo, and the step runs again by itself once the cap resets.
+- A `type=hold` note (the Opus cap) is not a reply: it keeps the workflow labels, adds
+  needs-leo, and the step runs again by itself once a slot frees up.
+- A `type=defect pr=N` note ("galing sa #N") links a bug request to the merged loop PR that
+  caused it; the loop writes it and labels the issue `bug`. It is not a reply either.
 """
 import argparse
 import json
@@ -51,7 +53,7 @@ AGENTS = {"code", "lead"}
 OWNER_ASSOCIATIONS = {"OWNER"}  # config owner_associations can add "MEMBER" for an organization repo
 ROLE = {"plan": "lead", "revise": "lead", "review": "lead", "review-recheck": "lead",
         "build": "code", "fix": "code", "merge": "code"}
-NOT_REPLIES = {"approval", "hold"}  # relayed approvals are keywords; holds wait for the Opus cap
+NOT_REPLIES = {"approval", "hold", "defect"}  # keywords, Opus-cap holds and defect links are not replies
 MODEL_RAN = re.compile(r"(?im)^Model:[ \t]*(haiku|sonnet|opus|fable)\b")
 CONFIDENCE = re.compile(r"(?im)^[ \t>*-]*\**Confidence\**[ \t]*:[ \t]*\**[ \t]*(high|low)\b")
 UNCHECKED = re.compile(r"(?im)^[ \t>*-]*\**Unchecked\**[ \t]*:[ \t]*\**[ \t]*(\S.*)$")

@@ -34,8 +34,10 @@ risk_words          lowercase single words that count as risky logic, on top of 
 feature_roots       folder globs that name the feature areas, for example ["src/*"].
 test_globs          globs of test files, on top of the built-in test patterns.
 doc_globs           globs of documentation files, on top of .md, .txt and .rst.
-points, threshold, max_opus_per_day   review scoring and the daily Opus cap (checked now,
-                    used by review routing v2).
+points, threshold   review scoring (routing v2).
+max_opus_per_window, opus_window_hours   the Opus cap: at most N opus steps in the last H hours
+                    (default: no cap; H defaults to 5). Over it, an opus step is held, never
+                    run on a weaker model.
 plan_dir, plan_sections, commit_ref_pattern, merge_phrase, deploy   process settings (checked
                     now, used by the plan check and the merge gate).
 
@@ -131,6 +133,14 @@ def _points(key, v):
             return f"{k} must be a whole number from 0 to 5"
 
 
+def _opt_int_range(lo, hi):
+    check = _int_range(lo, hi)
+
+    def opt(key, v):
+        return None if v is None else check(key, v)
+    return opt
+
+
 def _plan_sections(key, v):
     if v is None or v == LITE_SECTIONS:
         return None
@@ -179,7 +189,8 @@ SCHEMA = {
     "doc_globs": ([], _globs),
     "points": (dict(DEFAULT_POINTS), _points),
     "threshold": (3, _int_range(2, 10)),
-    "max_opus_per_day": (3, _int_range(0, 50)),
+    "max_opus_per_window": (None, _opt_int_range(0, 50)),
+    "opus_window_hours": (5, _int_range(1, 24)),
     "plan_dir": (None, _opt_str),
     "plan_sections": (None, _plan_sections),
     "commit_ref_pattern": (None, _regex),

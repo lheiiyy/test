@@ -27,8 +27,9 @@ Rules (the table in references/models.md mirrors them):
 - fix: sonnet (haiku for documentation only); opus on risk, on the third review
   round, and on the second attempt at the same failure (before the run parks).
 - The owner can force a tier with `Model: opus` in the request, or with the Model field of
-  the issue form. It applies to plan, revise, build, fix and review; a review is clamped to
-  sonnet or opus (`haiku` is lifted to sonnet).
+  the issue form. It applies to plan, revise, build, fix and review. For a review it can only
+  choose sonnet or opus (`haiku` is lifted to sonnet), and it can never lower a review hard stop:
+  that review is opus whatever the Model line says.
 - fable (the top tier) is never picked. It costs the most, so only the owner asks for it.
 
 `delegate` means the tier is above the model this task runs on (--session): hand
@@ -340,11 +341,15 @@ def pick(step, paths=(), text="", tasks=0, attempt=1, round_=1, session=None, de
     if step in ("merge", "verify"):
         tier, why = "haiku", "a scripted command: run it and read its exit code"
     elif forced and step == "review":
-        tier = "sonnet" if forced == "haiku" else forced
-        lifted = "; haiku lifted to the sonnet floor" if forced == "haiku" else ""
-        why = f"the owner's request sets the model to {forced}{lifted}"
-        review = dict(review_pick(paths, diff, cfg, history, text, goal, declared, round_), tier=tier,
-                      why=f"owner's Model line ({forced}{lifted})")
+        review = review_pick(paths, diff, cfg, history, text, goal, declared, round_)
+        if review["hard_stop"] and forced != "opus":
+            tier = "opus"
+            why = f"{review['why']}: the owner's Model: {forced} cannot lower a hard stop"
+        else:
+            tier = "sonnet" if forced == "haiku" else forced
+            lifted = "; haiku lifted to the sonnet floor" if forced == "haiku" else ""
+            why = f"the owner's request sets the model to {forced}{lifted}"
+            review = dict(review, tier=tier, why=f"owner's Model line ({forced}{lifted})")
     elif forced:
         tier, why = forced, f"the owner's request sets the model to {forced}"
     elif step == "report":
@@ -396,7 +401,7 @@ def pick(step, paths=(), text="", tasks=0, attempt=1, round_=1, session=None, de
     report = {
         "step": step, "tier": tier, "action": action, "session": running, "reasons": [why], "note": note,
         "model_line": lines,  # paste the one that is true; check_reply.py rejects a reply without it
-        "forced": bool(forced),
+        "forced": bool(forced), "forced_tier": forced,
         "signals": {"docs_only": docs_only, "risk_paths": risk_paths,
                     "risk_text": risk_text.group(1).lower() if risk_text else None,
                     "large": large, "files": len(paths), "source_files": len(sources), "tasks": tasks,

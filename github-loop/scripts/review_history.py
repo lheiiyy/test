@@ -8,13 +8,15 @@ Prints one JSON object:
   changes_requested  true when a Lead verdict after the latest plan on this issue requested changes;
                      null when the issue could not be read
   defects            post-merge defects: owner issues labeled `bug` or `defect` that name a merged
-                     loop PR (`#N`, a PR from a configured branch prefix) and were opened within 14
-                     days of that merge, as {pr, merged_at, opened_at, files}; null when they could
-                     not be read, which the score reports as "defect history unknown"
+                     loop PR (`#N` in the title or body, or the loop's own `type=defect pr=N` note,
+                     "Galing sa #N"), opened within 14 days of that merge, as {pr, merged_at,
+                     opened_at, files}; null when they could not be read, which the score reports
+                     as "defect history unknown"
   errors             what could not be read
 
 Only numbers and file names leave this script: a defect issue's text is read to find `#N` and is
-never printed. Bounded: the newest 100 issues per label and at most 10 referenced PRs.
+never printed. Bounded: the newest 100 issues per label, the comments of the newest 20, and at
+most 10 referenced PRs.
 Exit 0 (an unreadable part is null, never a guess), or 2 on bad input.
 Test without the network: --fixtures DIR with issue.json, comments.json, bug.json, defect.json,
 pr<N>.json and pr<N>.files.json.
@@ -28,11 +30,12 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import config as loop_config  # noqa: E402
 from ghapi import ApiError, from_fixture, get_all, get_json  # noqa: E402
-from loop_guard import login, review_history, set_owner_associations, thread  # noqa: E402
+from loop_guard import AGENTS, first_header, is_owner, login, review_history, set_owner_associations, thread  # noqa: E402,E501
 from pick_model import DEFECT_DAYS, _days  # noqa: E402
 
 DEFECT_LABELS = ("bug", "defect")
 MAX_PRS = 10
+MAX_COMMENT_READS = 20
 REF = re.compile(r"(?<![\w/])#(\d+)\b")
 
 
@@ -50,7 +53,22 @@ def changes_requested(repo, issue_no, owner, fixtures):
 
 
 def defects(repo, owner, prefixes, fixtures):
-    found, seen, prs = [], set(), {}
+    found, seen, prs, reads = [], set(), {}, [0]
+
+    def linked(issue):
+        """The loop's `type=defect pr=N` notes on this issue (one comment read, bounded)."""
+        if reads[0] >= MAX_COMMENT_READS:
+            return []
+        reads[0] += 1
+        n = issue.get("number")
+        comments = read(f"repos/{repo}/issues/{n}/comments", fixtures, f"{n}.comments.json", [], many=True)
+        out = []
+        for c in comments:
+            h = first_header(c.get("body") or "") if is_owner(c, owner) else None
+            if h and h.get("from") in AGENTS and h.get("type") == "defect" and str(h.get("pr", "")).isdigit():
+                out.append(int(h["pr"]))
+        return out
+
     for label in DEFECT_LABELS:
         issues = read(f"repos/{repo}/issues?labels={label}&state=all&sort=created&direction=desc&per_page=100",
                       fixtures, f"{label}.json", [])
@@ -58,7 +76,7 @@ def defects(repo, owner, prefixes, fixtures):
             if "pull_request" in issue or login(issue.get("user")).lower() != owner.lower():
                 continue
             text = f"{issue.get('title') or ''}\n{issue.get('body') or ''}"
-            for number in dict.fromkeys(int(n) for n in REF.findall(text)):
+            for number in dict.fromkeys([int(n) for n in REF.findall(text)] + linked(issue)):
                 key = (issue.get("number"), number)
                 if key in seen or (number not in prs and len(prs) >= MAX_PRS):
                     continue

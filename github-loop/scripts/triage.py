@@ -31,12 +31,12 @@ Prints one JSON object:
   reopen     closed issues the owner answered with APPROVED, REVISE: or CONTINUE: ("Close with
              comment" was tapped); run `loop_gh.py reopen`, then run triage again
   deferred   work that needs a stronger model than --max-tier; another task takes it
-  hold       opus-tier work over the daily Opus cap (`max_opus_per_day`, default 3, counted from
-             today's loop replies whose Model line names opus; the day is the UTC day, so it
-             resets at 08:00 Manila). Post `loop_gh.py hold` for each: it labels needs-leo and the
-             step comes back by itself after the reset. It is never run on a weaker model. The
-             owner's `Model: opus` in the request is counted but never held. Every work entry
-             carries opus_left, which route.py --opus-left needs.
+  hold       opus-tier work over the Opus cap, when one is set (`max_opus_per_window` opus steps in
+             the last `opus_window_hours`, default 5; no cap by default). The count is the loop
+             replies whose Model line names opus. Post `loop_gh.py hold` for each: it labels
+             needs-leo and the step comes back by itself once a slot frees up. It is never run on a
+             weaker model. The owner's `Model: opus` in the request is counted but never held.
+             With a cap, every work entry carries opus_left, which route.py --opus-left needs.
   stalled    the OTHER role's work that no run picked up for --stall-minutes (default 180); park it
              with `loop_gh.py park --from <your role>` so the owner sees it
   stale      issues stuck on code-working longer than --stale-minutes, or
@@ -54,7 +54,7 @@ import argparse
 import json
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import config as loop_config  # noqa: E402
@@ -94,16 +94,16 @@ def minutes_since(value, now):
     return int((now - parse_time(value)).total_seconds() // 60) if value else 0
 
 
-def day_start(now):
-    return now.astimezone(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+def window_start(now, hours):
+    return now.astimezone(timezone.utc) - timedelta(hours=hours)
 
 
-def opus_replies_today(repo, owner, now, fixtures):
-    """Loop replies posted since 00:00 UTC today whose Model line names opus as the model that ran (one list
-    read for the whole repository). A hold or a relayed approval carries no Model line, so it never counts."""
-    start = day_start(now)
+def opus_replies_since(repo, owner, now, hours, fixtures):
+    """Loop replies posted in the last `hours` whose Model line names opus as the model that ran (one list read
+    for the whole repository). A hold or a relayed approval carries no Model line, so it never counts."""
+    start = window_start(now, hours)
     since = start.strftime("%Y-%m-%dT%H:%M:%SZ")
-    comments = fetch(f"repos/{repo}/issues/comments?since={since}", fixtures, "comments.today.json")
+    comments = fetch(f"repos/{repo}/issues/comments?since={since}", fixtures, "comments.recent.json")
     count = 0
     for c in comments:
         if not c.get("created_at") or parse_time(c["created_at"]) < start or not is_owner(c, owner):
@@ -115,7 +115,7 @@ def opus_replies_today(repo, owner, now, fixtures):
 
 
 def tier_of(item, issue, repo, fixtures, cfg=None):
-    """(tier, reason, forced): what model tier this step needs, from pick_model.py. The PR's file list (one
+    """(tier, reason, forced_opus): what model tier this step needs, from pick_model.py. The PR's file list (one
     call) sharpens review and fix; if it is unavailable the tier is a floor and says so. The step itself re-runs
     pick_model.py with the real diff, and that answer wins. A review-recheck is always opus."""
     wt = item.get("work_type")
@@ -132,7 +132,7 @@ def tier_of(item, issue, repo, fixtures, cfg=None):
             caveat = " (the PR's files could not be read, so this tier is a floor)"
     report = pick(step, paths, issue.get("body") or "", round_=item.get("round") or item.get("review_round") or 1,
                   cfg=cfg)
-    return report["tier"], report["reasons"][0] + caveat, report["forced"]
+    return report["tier"], report["reasons"][0] + caveat, report.get("forced_tier") == "opus"
 
 
 def reopen_candidates(repo, owner, now, fixtures, reopen_hours, max_replies, max_revisions, max_review_rounds):
@@ -165,8 +165,9 @@ def triage(repo, owner, stale_minutes, now, fixtures, build_stale_minutes=180,
            max_replies=20, max_revisions=3, role="code", max_review_rounds=4,
            max_tier=None, min_tier=None, defer_minutes=120, stall_minutes=180, reopen_hours=48, cfg=None):
     cfg = cfg or loop_config.defaults()
-    cap = cfg.get("max_opus_per_day", 3)
-    opus_used = None  # read once, only when there is autopilot work
+    cap = cfg.get("max_opus_per_window")  # None: no cap, and nothing is counted
+    window = cfg.get("opus_window_hours") or 5
+    opus_used = None  # read once, only when a cap is set and there is autopilot work
     issues = fetch(f"repos/{repo}/issues?state=open", fixtures, "issues.json")
     result = {"repo": repo, "owner": owner, "role": role, "work": [], "needs_leo": [], "stale": [], "ignored": [],
               "reopen": [], "deferred": [], "stalled": [], "hold": []}
@@ -225,17 +226,18 @@ def triage(repo, owner, stale_minutes, now, fixtures, build_stale_minutes=180,
                 for key in ("work_type", "phase", "notes", "pr", "head", "review_round", "round", "since"):
                     if key in decision:
                         item[key] = decision[key]
-                item["tier"], item["tier_reason"], forced = tier_of(item, issue, repo, fixtures, cfg)
+                item["tier"], item["tier_reason"], forced_opus = tier_of(item, issue, repo, fixtures, cfg)
                 if min_tier and RANK[item["tier"]] < RANK[min_tier]:
                     result["ignored"].append(dict(entry, reason=f"{item['tier']}-tier {item['work_type']}; this task "
                                                                 f"only takes {min_tier} and above"))
                     continue
-                if opus_used is None:
-                    opus_used = opus_replies_today(repo, owner, now, fixtures)
-                if item["tier"] == "opus" and not forced and opus_used >= cap:
-                    reason = f"Opus cap {opus_used}/{cap} reached (UTC day)"
+                if cap is not None and opus_used is None:
+                    opus_used = opus_replies_since(repo, owner, now, window, fixtures)
+                if cap is not None and item["tier"] == "opus" and not forced_opus and opus_used >= cap:
+                    reason = f"Opus cap {opus_used}/{cap} reached (last {window} hours)"
                     if on_hold(issue, owner):
-                        result["ignored"].append(dict(entry, reason=f"on hold: {reason}; it runs again after 00:00 UTC"))
+                        result["ignored"].append(dict(entry, reason=f"on hold: {reason}; it runs again when a slot "
+                                                                    f"frees up"))
                     else:
                         result["hold"].append(dict(entry, next_turn=decision["next_turn"], work_type=item["work_type"],
                                                    phase=item.get("phase"), role=item["role"], tier="opus",
@@ -249,9 +251,10 @@ def triage(repo, owner, stale_minutes, now, fixtures, build_stale_minutes=180,
                         continue
                     item["tier_note"] = (f"waited {waited} min for a {item['tier']} task; run it at your own tier "
                                          f"({max_tier}) and say so in the Model line")
-                if item["tier"] == "opus" and "tier_note" not in item:
-                    opus_used += 1  # this run spends one
-                item["opus_left"] = max(cap - opus_used, 0)
+                if cap is not None:
+                    if item["tier"] == "opus" and "tier_note" not in item:
+                        opus_used += 1  # this run spends one
+                    item["opus_left"] = max(cap - opus_used, 0)
             result["work"].append(item)
         elif decision["action"] == "needs-leo":
             target = result["needs_leo"] if parks else result["ignored"]

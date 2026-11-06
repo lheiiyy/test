@@ -28,7 +28,8 @@ Rules:
   `Why: hard stop (...)` or `Why: owner's Model line (...)` (pick_model.py prints it). A verdict
   by sonnet also carries `Confidence: high|low` and `Unchecked: <what was not checked, or none>`;
   a low-confidence sonnet approval gets one opus recheck of the Unchecked items before any merge.
-- A hold (`type=hold`) says why an opus step waits (the daily Opus cap) and labels needs-leo.
+- A hold (`type=hold`) says why an opus step waits (the Opus cap) and labels needs-leo.
+- A defect note (`type=defect pr=<N>`) says "Galing sa #N": this bug came from merged loop PR N.
 - A plan reply also carries `Risk: low|normal|high`, `CI required: yes|no` and
   `Files in scope: <folders/ and files>`; the merge gate reads all three (high risk or a file
   outside the scope means the owner merges; CI required means checks must exist).
@@ -52,7 +53,7 @@ HEADER = re.compile(r"<!--\s*loop:v1\s+([^>]*?)-->")
 URL = re.compile(r"https?://\S+")
 SHA = re.compile(r"\A[0-9a-f]{40}\Z")
 ALLOWED_ADD = {"needs-leo", "done", "awaiting-approval", "to-review", "reviewed"}
-TYPES = {"result", "question", "plan", "summary", "verdict", "approval", "hold"}
+TYPES = {"result", "question", "plan", "summary", "verdict", "approval", "hold", "defect"}
 PHASE_FOR_TYPE = {"plan": "1", "summary": "2", "verdict": "2"}
 LIMITS = {"summary": 250, "verdict": 400}
 REPORT_LINES = ["implemented and tested", "reviewed", "merged", "deployed", "blocked or unverified"]
@@ -157,6 +158,8 @@ def check(text, turn, add, remove, max_words=None, expect_from="code", session=N
             problems.append("header type must be one of " + ", ".join(sorted(TYPES)))
         elif rtype in PHASE_FOR_TYPE and fields.get("phase") != PHASE_FOR_TYPE[rtype]:
             problems.append(f"a {rtype} reply must say phase={PHASE_FOR_TYPE[rtype]}")
+        if rtype == "defect" and not str(fields.get("pr", "")).isdigit():
+            problems.append("a defect note names the merged PR that caused the bug: pr=<number>")
         if rtype in ("verdict", "approval") and fields.get("from") != "lead":
             problems.append(f"only the Lead posts a {rtype}")
         if (rtype == "result" and fields.get("phase") == "2") or rtype == "verdict":

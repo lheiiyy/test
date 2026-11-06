@@ -15,7 +15,7 @@ never become a proposal. Set "improve": false in .github/github-loop.json to swi
 
 Review routing v2 adds four patterns: opus reviews picked by score that found nothing to change,
 sonnet reviews followed by a post-merge defect, frequent low confidence, and frequent holds for the
-daily Opus cap. Routing proposals name a setting (threshold, points, risk_paths, max_opus_per_day)
+Opus cap. Routing proposals name a setting (threshold, points, risk_paths, max_opus_per_window)
 and need the owner's APPROVED like any other guarded change.
 
 --open-issue posts the proposals as ONE issue labeled improve-proposal, titled by the proposal ids,
@@ -104,7 +104,7 @@ def proposals(records, min_count=3):
     held = [r["number"] for r in records if r.get("cap_parked")]
     if len(held) >= min_count:
         add("routing-cap-holds", "routing", len(held), held, "verified",
-            "Steps waited for the daily Opus cap. Raise `max_opus_per_day`, or raise `threshold` so fewer reviews "
+            "Steps waited for the Opus cap. Raise `max_opus_per_window`, or raise `threshold` so fewer reviews "
             "need opus.")
     by_reason = {}
     for r in records:

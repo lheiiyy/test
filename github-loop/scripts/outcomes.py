@@ -15,7 +15,7 @@ risk (the plan's Risk line), rejected_comments, and for review routing v2: revie
 latest verdict's `Why: score N`), why (fixed reason codes), hard_stop (a fixed code), confidence
 (high | low, from a sonnet verdict), rechecked, cap_parked (a hold for the Opus cap), areas (the
 feature areas of the latest PR's files) and defect_after (a bug or defect issue by the owner named
-that PR within 14 days of its summary). `evidence` says which fields are verified
+that PR, in its text or in the loop's "Galing sa #N" note, within 14 days of its summary). `evidence` says which fields are verified
 (counted from headers and labels) and which are uncertain (read from free text, such as a park
 reason). improve.py turns repeated patterns into proposals; neither script changes anything.
 Exit 0, or 2 on an API or input failure.
@@ -201,13 +201,25 @@ def latest_pr(issue, owner):
     return int(pr) if pr and str(pr).isdigit() else None
 
 
+def defect_notes(issue, owner):
+    """(pr number, opened_at) for the loop's `type=defect pr=N` notes ("Galing sa #N") on a bug issue."""
+    if not label_names(issue.get("labels")) & {"bug", "defect"}:
+        return []
+    refs = []
+    for c in issue.get("comments") or []:
+        h = first_header(c.get("body") or "") if is_owner(c, owner) else None
+        if h and h.get("from") in AGENTS and h.get("type") == "defect" and str(h.get("pr", "")).isdigit():
+            refs.append((int(h["pr"]), issue.get("created_at")))
+    return refs
+
+
 def collect(repo, owner, fixtures=None, limit=50, cfg=None):
     if fixtures:
         issues = from_fixture(fixtures, "issues.json", [])
     else:
         issues = get_json(f"repos/{repo}/issues?state=all&sort=updated&direction=desc&per_page=100")
     defects = defect_refs(repo, owner, fixtures)
-    records = []
+    loaded = []
     for issue in issues[:limit]:
         if "pull_request" in issue or login(issue.get("user")).lower() != owner.lower():
             continue
@@ -216,7 +228,10 @@ def collect(repo, owner, fixtures=None, limit=50, cfg=None):
         n = issue["number"]
         comments = (from_fixture(fixtures, f"{n}.comments.json", []) if fixtures else
                     get_all(f"repos/{repo}/issues/{n}/comments"))
-        issue = dict(issue, comments=comments)
+        loaded.append(dict(issue, comments=comments))
+        defects += defect_notes(loaded[-1], owner)
+    records = []
+    for issue in loaded:
         pr = latest_pr(issue, owner)
         files = []
         if pr:

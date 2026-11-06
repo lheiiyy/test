@@ -11,9 +11,9 @@ Prints one JSON object:
   gates                every gate that applies. The base gates always apply; routing only adds
   model                the pick_model.py report for this step (tier, action, model_line; for a review
                        also the score, the hard stop and the Why text)
-  hold                 only when the model is opus, the owner did not force it, and --opus-left (the
-                       work entry's opus_left from triage) is 0: the reason to pass to
-                       `loop_gh.py hold`. Never run the step on a weaker model instead.
+  hold                 only when an Opus cap is set, the model is opus, the owner did not ask for opus,
+                       and --opus-left (the work entry's opus_left from triage) is 0: the reason to
+                       pass to `loop_gh.py hold`. Never run the step on a weaker model instead.
 
     route.py --step review --git-range origin/main...<head> --history history.json --opus-left 2
 reads the diff for the review score from the same range (or --diff FILE) and the earlier
@@ -99,9 +99,11 @@ def route(step, paths=(), text="", declared=None, round_=1, attempt=1, tasks=0, 
     out = {"step": step, "risk": tier, "risk_reasons": reasons,
            "experts": [{"id": e["id"], "note": e.get("note")} for e in chosen],
            "gates": gates, "model": model, "files": len(paths)}
-    if model["tier"] == "opus" and not model["forced"] and opus_left is not None and opus_left <= 0:
-        cap = (cfg or {}).get("max_opus_per_day", 3)
-        out["hold"] = {"reason": f"Opus cap {cap}/{cap} reached (UTC day)",
+    cap = (cfg or {}).get("max_opus_per_window")
+    if (cap is not None and model["tier"] == "opus" and model.get("forced_tier") != "opus" and opus_left is not None
+            and opus_left <= 0):
+        window = (cfg or {}).get("opus_window_hours") or 5
+        out["hold"] = {"reason": f"Opus cap {cap}/{cap} reached (last {window} hours)",
                        "do": "post `loop_gh.py hold` with this reason; never run the step on a weaker model"}
     return out
 
