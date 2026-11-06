@@ -118,3 +118,18 @@ Branch `claude/skill-fix-a`, based on `main` at `6fb85e8` (A0 merged). Plan: `do
 | `flake8 --select F` on scripts and tests | 0 |
 | `npm test` in `trip-monitoring/` (not edited) | 38 run, 38 pass; its regenerated screenshots restored before commit |
 
+## PR-B: review routing v2 (2026-11-06)
+
+Branch `claude/skill-fix-b`, based on `main` at `045cad5` (PR-A merged). Plan: `docs/plan-skill-fixes.md` rev 3, section PR-B.
+
+| Command | Result |
+|---|---|
+| `python3 -B evals/test_scripts.py` on `main` before any change | 213 run, 213 OK |
+| `python3 -B evals/test_scripts.py` on this branch | 213 run, 213 OK. Changed on purpose: the verdict fixture now carries `Why:`, `Confidence:` and `Unchecked:` (`VERDICT_MODEL`); the owner's review `Model: haiku` now gives sonnet; the subagent model line now ends with its Why. |
+| `python3 -B evals/test_routing_v2.py` (new) | 37 run, 37 OK: the 9 rows of the plan's section 2 table and the 4 TDMS shapes (`routing_cases.json`), a Why line from route.py for every case, threshold and points from the settings, whole-word tokens, each hard stop, the owner override clamp, contract and defect signals, check_reply's new lines, the recheck cascade, the UTC-day cap and holds, the hold command, review_history.py, outcomes fields, improve proposals and `--open-issue` |
+| `test_config_rules.py`, `test_fire.py`, `test_route_event.py`, `test_workflow.py` | 19 OK; 10 OK; 30 OK; 9 OK (1 skipped) |
+| 32 hand-made mutations of the new rules (substring risk words, unsplit identifiers, risk words in tests, each hard stop removed, threshold ignored, haiku not lifted, contract and defect windows, doc lines counted, recheck missing or repeated, the merge gate skipping the recheck, a hold counted as a reply, the cap off by one or on a rolling 24 hours, a forced opus held, every reply counted, a sonnet recheck, check_reply and outcomes accepting free text, the hold dropping its label, improve below its minimum or posting twice, a non-loop PR counted as a defect) | 30 caught on the first run; the 2 survivors led to 2 new assertions, and then all 32 were caught |
+| `flake8 --select F` on scripts and tests | 0 |
+| `npm test` in `trip-monitoring/` (not edited) | 38 run, 38 pass; regenerated screenshots restored before commit |
+| Not run | A live review on GitHub with the new lines; `review_history.py` and `improve.py --open-issue` against the GitHub API (fixtures and dry run only) |
+

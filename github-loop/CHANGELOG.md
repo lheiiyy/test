@@ -2,7 +2,11 @@
 
 Each adopted change is its own PR with one line here. After its PR is merged, tag the merge commit `github-loop-<date>` (for example `github-loop-2026-10-29`), so the runbook can roll back to it.
 
-## 2026-11-06 (newest): settings schema, one glob matcher, source-only counting (PR-A)
+## 2026-11-06 (newest): review routing v2 (PR-B)
+
+- A review goes to opus on a hard stop (sensitive or `risk_paths` file, goal risk words, `Risk: high`, a weakened test, the third round, an authority document with no code) or on a score at or above `threshold`; otherwise sonnet. The score counts feature areas, source files, diff lines, whole-word risk words in changed source lines, a public contract change, an authority document, no test change, an earlier CHANGES REQUESTED and a post-merge defect in the same area (`scripts/review_history.py`). The verdict's Model line ends with `Why:`; a sonnet verdict adds `Confidence:` and `Unchecked:`, and a low-confidence approval gets one opus `review-recheck` before the merge. A daily Opus cap (UTC day, default 3) holds opus steps with `loop_gh.py hold` (needs-leo; they resume after the reset and are never downgraded). The owner's review `Model: haiku` is lifted to sonnet. outcomes.py gains the routing fields; improve.py gains four routing proposals and `--open-issue`.
+
+## 2026-11-06: settings schema, one glob matcher, source-only counting (PR-A)
 
 - Settings are checked by type and range, an unknown key names the closest one, and new optional keys (`risk_paths`, `authority_docs`, `risk_words`, `feature_roots`, `test_globs`, `doc_globs`, `points`, `threshold`, `max_opus_per_day`, `plan_dir`, `plan_sections`, `commit_ref_pattern`, `merge_phrase`, `deploy`) are accepted; `branch_prefix` may be a list. One glob matcher (`rules.glob_match`) for every path list; `risk_paths` reaches the risk tier, the model pick and the merge gate, and only adds. A big change counts source files only. The top-level `github-loop/` counts as the skill. Example profile: `references/profiles/tdms.example.json`.
 
