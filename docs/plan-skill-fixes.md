@@ -446,4 +446,22 @@ No open questions remain. A0 is approved (2026-11-06); A, B and C each still nee
 - Every PR is still **Risk: high**, because it changes or copies the loop's own safety scripts. Leo
   reviews and merges each one; the loop does not.
 
+## 6. Decisions during the PR-B review (2026-11-06)
+
+Leo reviewed the PR-B checklist (#33, R1-R7). These replace the matching lines in PR-B above:
+- **R1:** over the cap, a step is **held**, not parked (`loop_gh.py hold`): it keeps its label, gets
+  needs-leo, and runs again by itself. The cap counts the **last 5 hours** (`opus_window_hours`,
+  default 5), not the UTC day.
+- **R3:** a review with a hard stop is **always opus**. The owner's `Model: sonnet` or `Model: haiku`
+  cannot lower it; `Model: opus` always raises.
+- **R4:** **no Opus cap for now.** `max_opus_per_day` is replaced by `max_opus_per_window` (default
+  none, so nothing is counted or held) and `opus_window_hours`.
+- **R7:** the **loop** links a bug to the merged loop PR that caused it, because the owner will not:
+  the Lead runs `loop_gh.py defect --pr <N>`, which posts `Galing sa #N` and labels the issue `bug`.
+- R2, R5 and R6 stay as written.
+
+For PR-C: the smoke test's model check (part 3) expects opus for the sensitive issue even with
+`Model: sonnet`, and adds one `loop_gh.py defect` dry run. No cost row is skipped for a hold,
+because there is no cap.
+
 AWAITING APPROVAL
