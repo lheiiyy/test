@@ -14,6 +14,9 @@ Rules (the table in references/models.md mirrors them):
 - plan, revise, review: sonnet is the floor. They go to opus on risk, on a big
   change, on an architecture-heavy goal, on the third review round, and on the
   second plan revision.
+- A big change means 8 or more source files, or 5 or more plan tasks. Tests, documentation,
+  lockfiles and generated files do not count (rules.classify, with the settings' test_globs and
+  doc_globs).
 - build: sonnet (haiku for documentation only); opus only when risky AND big.
 - fix: sonnet (haiku for documentation only); opus on risk, on the third review
   round, and on the second attempt at the same failure (before the run parks).
@@ -34,7 +37,9 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from rules import ARCHITECTURE, DOCS, RISK_PATH, RISK_TEXT, is_docs_only, norm, sensitive_paths  # noqa: E402,F401
+import config as loop_config  # noqa: E402
+from rules import (ARCHITECTURE, DOCS, RISK_PATH, RISK_TEXT, is_docs_only, norm, sensitive_paths,  # noqa: E402,F401
+                   source_files)
 
 RANK = {"haiku": 1, "sonnet": 2, "opus": 3, "fable": 4}
 STEPS = ["plan", "revise", "build", "fix", "review", "merge", "verify", "report"]
@@ -75,16 +80,17 @@ def forced_tier(text):
     return None
 
 
-def pick(step, paths=(), text="", tasks=0, attempt=1, round_=1, session=None, declared=None):
+def pick(step, paths=(), text="", tasks=0, attempt=1, round_=1, session=None, declared=None, cfg=None):
     if step not in STEPS:
         raise ValueError(f"unknown step {step!r}; use one of {', '.join(STEPS)}")
     paths = norm(paths)
     docs_only = is_docs_only(paths)
-    risk_paths = sensitive_paths(paths)  # shared with route.py and the merge gate (rules.py)
+    risk_paths = sensitive_paths(paths, cfg)  # shared with route.py and the merge gate (rules.py)
+    sources = source_files(paths, cfg)
     goal = objective_of(text or "")
     risk_text = RISK_TEXT.search(goal)
     risky = bool(risk_paths or risk_text or declared == "high")
-    large = len(paths) >= 8 or tasks >= 5
+    large = len(sources) >= 8 or tasks >= 5
     heavy = bool(ARCHITECTURE.search(goal))
     why_risk = ("sensitive files: " + ", ".join(risk_paths[:3])) if risk_paths else (
         f"the goal mentions {risk_text.group(1).lower()}" if risk_text else
@@ -149,7 +155,7 @@ def pick(step, paths=(), text="", tasks=0, attempt=1, round_=1, session=None, de
         "forced": bool(forced),
         "signals": {"docs_only": docs_only, "risk_paths": risk_paths,
                     "risk_text": risk_text.group(1).lower() if risk_text else None,
-                    "large": large, "files": len(paths), "tasks": tasks, "attempt": attempt, "round": round_},
+                    "large": large, "files": len(paths), "source_files": len(sources), "tasks": tasks, "attempt": attempt, "round": round_},
     }
 
 
@@ -172,6 +178,7 @@ def main():
     ap.add_argument("--session", default=None, help="model of the running task: haiku, sonnet, opus (default sonnet)")
     ap.add_argument("--declared-risk", choices=("low", "normal", "high"), default=None,
                     help="the plan's Risk: line; high counts as a sensitive change")
+    ap.add_argument("--config", default=None, help="settings file (default .github/github-loop.json)")
     args = ap.parse_args()
 
     try:
@@ -181,7 +188,9 @@ def main():
         text = ""
         if args.text:
             text = sys.stdin.read() if args.text == "-" else open(args.text, encoding="utf-8").read()
-        report = pick(args.step, paths, text, args.tasks, args.attempt, args.round_, args.session, args.declared_risk)
+        cfg = loop_config.load(args.config)
+        report = pick(args.step, paths, text, args.tasks, args.attempt, args.round_, args.session, args.declared_risk,
+                      cfg)
     except (ValueError, OSError) as e:
         json.dump({"ok": False, "error": str(e)}, sys.stdout, indent=2)
         print()
