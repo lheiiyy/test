@@ -50,4 +50,9 @@ Owner checklist:
 - [ ] Reply `APPROVED` on #36.
 - [ ] Tap Merge on the PR at the end, then reply `CONTINUE: merged`.
 
-AWAITING APPROVAL
+APPROVED by Leo on 2026-11-07
+
+## Status
+- Built: README.md created with `## Loop status` and the exact line (T1).
+- Decision: new README at repo root; title `# test`.
+- Test: grep check found 1 line; diff lists only README.md and this plan.
